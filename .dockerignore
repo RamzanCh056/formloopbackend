@@ -1,0 +1,29 @@
+# Git / secrets
+.git
+.gitignore
+.env
+firebase-key.json
+firebase-config.json
+
+# Python
+__pycache__
+*.py[cod]
+.venv
+venv
+env
+*.egg-info
+
+# Large / generated (allow rvm_resnet50.pth in context when you bake weights into the image)
+*.pt
+rembg_frames_*
+api_outputs
+.cache
+*.mp4
+*.mov
+*.avi
+*.gif
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
