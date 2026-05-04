@@ -25,20 +25,8 @@ RUN pip install --no-cache-dir \
 COPY process_video_pro.py .
 COPY handler.py .
 
-RUN python3 <<'PY'
-from transformers import AutoModelForImageSegmentation
-model = AutoModelForImageSegmentation.from_pretrained(
-    'ZhengPeng7/BiRefNet',
-    trust_remote_code=True
-)
-print('BiRefNet downloaded successfully')
-PY
+RUN python3 -c "from transformers import AutoModelForImageSegmentation; AutoModelForImageSegmentation.from_pretrained('ZhengPeng7/BiRefNet', trust_remote_code=True); print('BiRefNet OK')"
 
-RUN python3 <<'PY'
-from ultralytics import YOLO
-YOLO('yolov8x-seg.pt')
-YOLO('yolov8x-pose.pt')
-print('YOLO models downloaded successfully')
-PY
+RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8x-seg.pt'); YOLO('yolov8x-pose.pt'); print('YOLO OK')"
 
 CMD ["python", "-u", "handler.py"]
