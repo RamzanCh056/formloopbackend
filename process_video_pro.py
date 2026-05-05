@@ -63,7 +63,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="kept for CLI compatibility; this pipeline uses BiRefNet (flag ignored)",
     )
-    p.add_argument("--no-yolo", action="store_true", help="skip pose + held-object segmentation")
+    p.add_argument(
+        "--no-yolo",
+        action="store_true",
+        help="fast path: skip YOLO (BiRefNet only). Omit for full quality (props/hands).",
+    )
     return p.parse_args()
 
 

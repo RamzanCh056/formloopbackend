@@ -47,6 +47,16 @@ def handler(job):
     gif_fps       = job_input.get("gif_fps", 12)
     dilation      = job_input.get("dilation", 18)
     conf          = job_input.get("conf", 0.20)
+    # True = BiRefNet-only (fast). False = full pipeline with YOLO pose/seg (slower, better props/hands).
+    pro_fast_raw = job_input.get("pro_fast_mode")
+    if pro_fast_raw is None:
+        pro_fast_mode = os.environ.get("RVM_PRO_FAST_MODE", "1").strip().lower() not in {
+            "0",
+            "false",
+            "no",
+        }
+    else:
+        pro_fast_mode = bool(pro_fast_raw)
 
     if not video_b64 and not video_url:
         return {"error": "No video provided"}
@@ -69,8 +79,9 @@ def handler(job):
                 f.write(base64.b64decode(video_b64))
 
         # Run pipeline
-        print("[Job] Running BiRefNet pipeline...")
-        result = subprocess.run([
+        mode = "BiRefNet-only (fast)" if pro_fast_mode else "BiRefNet + YOLO"
+        print(f"[Job] Running pipeline: {mode}")
+        cmd = [
             "python", "process_video_pro.py",
             "--input",     vid_path,
             "--gif",       gif_path,
@@ -78,8 +89,11 @@ def handler(job):
             "--gif-fps",   str(gif_fps),
             "--dilation",  str(dilation),
             "--conf",      str(conf),
-            "--device",    "cuda"
-        ], capture_output=True, text=True, timeout=900)
+            "--device",    "cuda",
+        ]
+        if pro_fast_mode:
+            cmd.append("--no-yolo")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
 
         print(f"[Job] stdout: {result.stdout[-500:]}")
 
