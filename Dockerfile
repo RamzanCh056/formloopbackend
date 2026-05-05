@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.4
-FROM runpod/pytorch:2.8.0-py3.11-cuda12.8-devel
+FROM runpod/pytorch:2.2.1-cuda12.1-cudnn8-runtime
 
 WORKDIR /app
 
