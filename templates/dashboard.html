@@ -57,24 +57,20 @@
 </div>
 {% endif %}
 
-<div class="mb-4 sm:mb-5 relative dash-glass rounded-2xl border border-white/[0.07] px-4 py-4 sm:px-5 sm:py-4 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]">
+<div class="mb-6 sm:mb-8 relative dash-glass rounded-2xl border border-white/[0.07] px-4 py-4 sm:px-5 sm:py-5">
   <div class="pointer-events-none absolute -top-16 right-8 h-28 w-28 rounded-full bg-indigo-500/20 blur-3xl"></div>
   <div class="pointer-events-none absolute bottom-0 left-24 h-24 w-24 rounded-full bg-cyan-500/10 blur-2xl"></div>
-  <header class="relative flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 lg:gap-5">
-    <div class="flex gap-3.5 sm:gap-4 min-w-0">
-      <div class="fl-logo-tile hidden sm:flex shrink-0 self-start rounded-xl p-2 ring-1 ring-white/[0.08] sm:self-center sm:p-2.5">
-        <img src="/static/formloop-logo-transparent.png" alt="" width="128" height="128" decoding="async" class="fl-brand-logo-img-mark h-9 w-9 sm:h-10 sm:w-10 object-contain opacity-[0.98]" />
-      </div>
-      <div class="min-w-0 flex-1">
-      <p class="text-[10px] font-bold uppercase tracking-[0.22em] text-indigo-400/95 mb-1.5 inline-flex items-center gap-2">
+  <header class="relative flex flex-col lg:flex-row lg:items-end lg:justify-between gap-5">
+    <div>
+      <p class="text-[10px] font-bold uppercase tracking-[0.22em] text-indigo-400/95 mb-2 inline-flex items-center gap-2">
         <span class="h-px w-8 bg-gradient-to-r from-transparent to-indigo-400/40 hidden sm:block"></span>
         Library
         <span class="h-px w-8 bg-gradient-to-l from-transparent to-indigo-400/40 hidden sm:block"></span>
       </p>
-      <h1 class="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight drop-shadow-[0_8px_28px_rgba(99,102,241,0.22)]">
+      <h1 class="text-3xl sm:text-4xl font-bold tracking-tight drop-shadow-[0_8px_28px_rgba(99,102,241,0.28)]">
         <span class="bg-gradient-to-br from-white via-zinc-100 to-zinc-500 bg-clip-text text-transparent">Your GIFs</span>
       </h1>
-      <p class="mt-1.5 text-xs sm:text-sm text-zinc-500 max-w-lg leading-relaxed">Studio-grade mattes — transparent GIFs and WebM, newest first.</p>
+      <p class="mt-2 text-sm text-zinc-500 max-w-lg leading-relaxed">Studio-grade mattes — your transparent GIFs, newest first.</p>
       {% if not guest_mode %}
       {% if show_watermark_note %}
       <p class="mt-2.5 text-xs text-zinc-500 max-w-lg leading-relaxed">Free exports carry a subtle <span class="text-zinc-400">FormLoop</span> mark. <a href="/subscription" class="font-semibold text-indigo-400 transition hover:text-indigo-300">Remove it with a plan</a>.</p>
@@ -85,9 +81,8 @@
       <p class="mt-2.5 text-xs text-zinc-600 max-w-lg"><span class="tabular-nums font-medium text-zinc-400">{{ used_count if used_count is defined else gif_count }}</span><span class="text-zinc-700"> / </span><span class="tabular-nums text-zinc-500">{{ gif_limit }}</span><span class="text-zinc-600"> GIFs this plan</span></p>
       {% endif %}
       {% endif %}
-      </div>
     </div>
-    <div class="flex flex-wrap items-center gap-2 sm:gap-2.5 shrink-0">
+    <div class="flex flex-wrap items-center gap-2.5">
       <button id="dash-create-top-btn" type="button" class="group dash-sheen inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/30 ring-1 ring-white/10 hover:from-indigo-500 hover:to-violet-500 hover:shadow-indigo-500/40 hover:-translate-y-0.5 active:translate-y-0 transition-all">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
         Create a GIF
@@ -108,10 +103,10 @@
 
 {% if not guest_mode %}
 {% set _who = (account_name|default('', true) or account_email|default('', true) or 'You') %}
-<div class="mb-5 sm:mb-6">
-  <div class="relative overflow-hidden rounded-xl sm:rounded-2xl border border-white/[0.07] bg-gradient-to-br from-zinc-950/90 to-[#08080c]/95 backdrop-blur-md shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset,0_16px_40px_-24px_rgba(99,102,241,0.1)]">
+<div class="mb-6 sm:mb-8">
+  <div class="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-br from-zinc-950/80 to-[#08080c]/90 backdrop-blur-md shadow-[0_1px_0_0_rgba(255,255,255,0.05)_inset,0_20px_50px_-28px_rgba(99,102,241,0.12)]">
     <div class="pointer-events-none absolute -right-8 top-0 h-20 w-20 rounded-full bg-violet-500/15 blur-2xl"></div>
-    <div class="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-5 sm:px-5 sm:py-3.5">
+    <div class="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:px-5 sm:py-4">
       <a href="/profile" class="group flex min-w-0 items-center gap-3.5 rounded-xl outline-none ring-indigo-500/0 transition hover:bg-white/[0.03] focus-visible:ring-2 focus-visible:ring-indigo-500/40 sm:-m-1 sm:p-1">
         <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold tracking-tight text-white shadow-md shadow-indigo-950/50 ring-2 ring-black/40" aria-hidden="true">{{ (_who[:1])|upper }}</span>
         <div class="min-w-0 text-left">
@@ -129,7 +124,7 @@
           </p>
         </div>
       </a>
-      <div class="flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-3 sm:border-t-0 sm:border-l sm:border-white/[0.06] sm:pt-0 sm:pl-5">
+      <div class="flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-4 sm:border-t-0 sm:border-l sm:border-white/[0.06] sm:pt-0 sm:pl-6">
         {% if not user.is_premium %}
         <a href="/subscription" class="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md shadow-indigo-500/20 ring-1 ring-white/10 transition hover:from-indigo-500 hover:to-violet-500">Upgrade plan</a>
         {% endif %}
@@ -283,70 +278,40 @@
   </div>
 </div>
 {% else %}
-<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
   {% for it in recent_gifs %}
-  <article class="group relative rounded-xl p-px bg-gradient-to-b from-white/[0.1] to-white/[0.02] hover:from-indigo-500/28 hover:to-violet-500/12 transition-all duration-300 shadow-card hover:shadow-glow flex flex-col">
-    <div class="rounded-[11px] bg-elevated/95 border border-white/[0.04] overflow-hidden flex flex-col h-full">
-      <div class="relative aspect-[9/16] fl-alpha-checker overflow-hidden ring-1 ring-inset ring-white/[0.06]">
-        <a href="{{ it.gif_url }}" target="_blank" rel="noopener" class="absolute inset-0 z-10 block">
-          <img data-preview-gif="{{ it.job_id }}" src="{{ it.gif_url }}" alt="" class="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]" loading="lazy" />
+  <article class="group/card relative rounded-2xl p-px bg-gradient-to-b from-white/[0.12] via-white/[0.04] to-violet-500/10 shadow-card hover:shadow-glow transition-all duration-500 hover:-translate-y-0.5 hover:from-indigo-500/30 hover:via-violet-500/15 hover:to-cyan-500/10">
+    <div class="rounded-[15px] bg-gradient-to-b from-[#12121a] to-[#0c0c10] border border-white/[0.05] overflow-hidden h-full flex flex-col">
+      <div class="relative aspect-[9/16] bg-zinc-950 overflow-hidden">
+        <a href="{{ it.gif_url }}" target="_blank" rel="noopener" class="absolute inset-0 z-0 block">
+          <img src="{{ it.gif_url }}" alt="" class="h-full w-full object-cover transition duration-700 ease-out group-hover/card:scale-[1.04]" loading="lazy" />
         </a>
-        {% if it.webm_url %}
-        <video data-preview-webm="{{ it.job_id }}" src="{{ it.webm_url }}" class="hidden absolute inset-0 h-full w-full object-contain bg-black" playsinline muted loop controls></video>
-        {% endif %}
-        <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-        {% if it.webm_url %}
-        <div class="absolute left-2 right-2 bottom-2 z-20 flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-black/55 p-1 backdrop-blur-sm">
-          <button type="button" data-switch-preview="{{ it.job_id }}" data-target="gif" class="preview-switch rounded-md px-2 py-1 text-[10px] font-semibold text-white bg-indigo-500/70">GIF</button>
-          <button type="button" data-switch-preview="{{ it.job_id }}" data-target="webm" class="preview-switch rounded-md px-2 py-1 text-[10px] font-semibold text-zinc-300 bg-white/10">WebM</button>
-        </div>
-        {% endif %}
-      </div>
-      <div class="p-2.5 flex-1 flex flex-col gap-2">
-        <div>
-          <p class="text-xs font-semibold text-zinc-100 truncate" title="{{ it.source_filename or 'Clip' }}">{{ it.source_filename or 'Clip' }}</p>
-          <p class="text-[9px] text-zinc-600 font-mono truncate mt-0.5 tracking-wide">{{ it.job_id[:10] }}…</p>
-        </div>
-        <div class="flex flex-wrap gap-1.5 mt-auto">
-          <a
-            href="{{ it.gif_url }}"
-            download
-            title="Download current preview"
-            data-smart-download="{{ it.job_id }}"
-            data-gif-url="{{ it.gif_url }}"
-            data-webm-url="{{ it.webm_url or '' }}"
-            class="inline-flex items-center gap-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.12] px-2 py-1.5 text-[10px] font-bold text-cyan-400 hover:text-cyan-300 transition ring-1 ring-white/[0.06]"
-          >
-            <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-            <span data-smart-download-label="{{ it.job_id }}">Download GIF</span>
-          </a>
-          <button
-            type="button"
-            data-smart-copy="{{ it.job_id }}"
-            data-gif-url="{{ it.gif_url }}"
-            data-webm-url="{{ it.webm_url or '' }}"
-            data-current-type="gif"
-            title="Copy current preview URL"
-            class="copy-btn inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] px-2 py-1.5 text-[10px] font-semibold text-zinc-300 hover:text-white transition"
-          >
-            <svg class="h-3.5 w-3.5 shrink-0 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-            <span class="copy-btn-label" data-smart-copy-label="{{ it.job_id }}">Copy GIF URL</span>
-          </button>
-          {% if it.webm_url %}
-          <a href="{{ it.webm_url }}" target="_blank" rel="noopener" title="Open WebM" class="inline-flex items-center gap-1 rounded-lg border border-cyan-500/25 bg-cyan-500/10 px-2 py-1.5 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-500/20 transition">
-            <span>Open WebM</span>
-          </a>
-          {% endif %}
-          {% if not guest_mode %}
-          <form method="post" action="/dashboard/gifs/{{ it.job_id }}/delete" class="inline" onsubmit="return confirm('Remove this GIF from your library?');">
-            <button type="submit" title="Delete from library" class="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-semibold text-rose-400/90 hover:bg-rose-500/10 hover:text-rose-300 transition ring-1 ring-rose-500/15">
-              <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-              <span>Delete</span>
+        <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-60 group-hover/card:opacity-90 transition-opacity duration-500"></div>
+        <div class="absolute inset-x-0 bottom-0 z-10 p-2 sm:p-2.5 translate-y-0 opacity-100 sm:translate-y-2 sm:opacity-0 sm:group-hover/card:translate-y-0 sm:group-hover/card:opacity-100 transition-all duration-300 ease-out">
+          <div class="flex items-center justify-center gap-1.5 rounded-xl bg-black/55 backdrop-blur-md border border-white/[0.1] px-1.5 py-1.5 shadow-lg shadow-black/40">
+            <a href="{{ it.gif_url }}" download title="Download" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-cyan-300 transition-colors duration-200 hover:bg-cyan-500/20 hover:text-cyan-200">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            </a>
+            <button type="button" data-url="{{ it.gif_url }}" title="Copy URL" class="copy-gif-url inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-violet-300 transition-colors duration-200 hover:bg-violet-500/20 hover:text-violet-200">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+              <span class="sr-only copy-gif-url-label">Copy URL</span>
             </button>
-          </form>
-          {% endif %}
+            {% if not guest_mode %}
+            <form method="post" action="/dashboard/gifs/{{ it.job_id }}/delete" class="inline" onsubmit="return confirm('Remove this GIF from your library?');">
+              <button type="submit" title="Delete" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-rose-400 transition-colors duration-200 hover:bg-rose-500/20 hover:text-rose-300">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
+            </form>
+            {% endif %}
+            <a href="{{ it.gif_url }}" target="_blank" rel="noopener" title="Open" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-indigo-300 transition-colors duration-200 hover:bg-indigo-500/20 hover:text-indigo-200">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+            </a>
+          </div>
         </div>
-        <a href="/dashboard/gifs" class="inline-flex items-center gap-1 text-[10px] font-semibold text-zinc-600 hover:text-indigo-400 transition">
+      </div>
+      <div class="px-3 py-2.5 sm:px-3.5 sm:py-3 border-t border-white/[0.05] bg-black/20">
+        <p class="text-[11px] sm:text-xs font-semibold text-zinc-200 truncate" title="{{ it.source_filename or 'Clip' }}">{{ it.source_filename or 'Clip' }}</p>
+        <a href="/dashboard/gifs" class="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold text-zinc-600 hover:text-indigo-400 transition">
           <span>All GIFs</span>
           <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         </a>
@@ -1079,73 +1044,25 @@
     });
   })();
 
-  document.querySelectorAll('[data-smart-copy]').forEach((btn) => {
+  document.querySelectorAll('.copy-gif-url').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const type = btn.getAttribute('data-current-type') || 'gif';
-      const u = type === 'webm'
-        ? (btn.getAttribute('data-webm-url') || '')
-        : (btn.getAttribute('data-gif-url') || '');
+      const u = btn.getAttribute('data-url');
       if (!u) return;
+      const label = btn.querySelector('.copy-gif-url-label');
+      const prevTitle = btn.getAttribute('title') || '';
       try {
         await navigator.clipboard.writeText(u);
-        const label = btn.querySelector('.copy-btn-label');
         if (label) {
           const t = label.textContent;
           label.textContent = 'Copied';
           setTimeout(() => { label.textContent = t; }, 1400);
         }
+        btn.setAttribute('title', 'Copied!');
+        setTimeout(() => btn.setAttribute('title', prevTitle || 'Copy URL'), 1600);
       } catch (err) {
         prompt('Copy this URL:', u);
-      }
-    });
-  });
-  document.querySelectorAll('[data-switch-preview]').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const id = btn.getAttribute('data-switch-preview');
-      const target = btn.getAttribute('data-target');
-      const gifEl = document.querySelector(`[data-preview-gif="${id}"]`);
-      const webmEl = document.querySelector(`[data-preview-webm="${id}"]`);
-      const smartDownload = document.querySelector(`[data-smart-download="${id}"]`);
-      const smartLabel = document.querySelector(`[data-smart-download-label="${id}"]`);
-      const smartCopy = document.querySelector(`[data-smart-copy="${id}"]`);
-      const smartCopyLabel = document.querySelector(`[data-smart-copy-label="${id}"]`);
-      const buttons = document.querySelectorAll(`[data-switch-preview="${id}"]`);
-      if (!gifEl) return;
-      buttons.forEach((b) => {
-        const active = b === btn;
-        b.classList.toggle('bg-indigo-500/70', active);
-        b.classList.toggle('text-white', active);
-        b.classList.toggle('bg-white/10', !active);
-        b.classList.toggle('text-zinc-300', !active);
-      });
-      if (target === 'webm' && webmEl) {
-        gifEl.classList.add('hidden');
-        webmEl.classList.remove('hidden');
-        webmEl.play().catch(() => {});
-        if (smartDownload) {
-          const webmUrl = smartDownload.getAttribute('data-webm-url') || '';
-          if (webmUrl) smartDownload.setAttribute('href', webmUrl);
-        }
-        if (smartLabel) smartLabel.textContent = 'Download WebM';
-        if (smartCopy) smartCopy.setAttribute('data-current-type', 'webm');
-        if (smartCopyLabel) smartCopyLabel.textContent = 'Copy WebM URL';
-      } else {
-        gifEl.classList.remove('hidden');
-        if (webmEl) {
-          webmEl.pause();
-          webmEl.classList.add('hidden');
-        }
-        if (smartDownload) {
-          const gifUrl = smartDownload.getAttribute('data-gif-url') || '';
-          if (gifUrl) smartDownload.setAttribute('href', gifUrl);
-        }
-        if (smartLabel) smartLabel.textContent = 'Download GIF';
-        if (smartCopy) smartCopy.setAttribute('data-current-type', 'gif');
-        if (smartCopyLabel) smartCopyLabel.textContent = 'Copy GIF URL';
       }
     });
   });

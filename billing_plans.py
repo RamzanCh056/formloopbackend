@@ -137,13 +137,13 @@ def plan_dict_for_template(p: PlanSpec) -> dict[str, Any]:
         "monthly_usd": p.monthly_usd,
         "yearly_monthly_equiv": y_eq,
         "yearly_total": round(p.monthly_usd * 12 * (1 - YEARLY_DISCOUNT), 2),
-        "yearly_discount_pct": int(YEARLY_DISCOUNT * 100),
-        "prices_from_stripe": False,
         "tagline": p.tagline,
         "features": list(p.features),
         "featured": p.featured,
         "stripe_monthly": stripe_price_id(p, yearly=False),
         "stripe_yearly": stripe_price_id(p, yearly=True),
+        "has_monthly": bool(stripe_price_id(p, yearly=False)),
+        "has_yearly": bool(stripe_price_id(p, yearly=True)),
     }
 
 

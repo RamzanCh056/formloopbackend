@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 import os
 import re
 import shutil
@@ -29,46 +27,16 @@ from billing_plans import (
     gif_limit_for_tier,
     plan_dict_for_template,
     plan_spec_by_key,
+    plan_tier_from_session,
+    stripe_price_id,
     tier_is_paid,
     PLANS_ORDERED,
     plan_display_name,
 )
 from firebase_auth import get_firebase_functions_region, get_firebase_web_config, verify_firebase_id_token
-from user_billing import billing_period_key_for_uid, effective_plan_tier, read_billing
-from output_job_store import list_matte_gifs_for_owner, read_job_owner, read_quota_usage
+from output_job_store import list_matte_gifs_for_owner, read_job_owner, read_owner_usage_count
 
-_log = logging.getLogger(__name__)
 APP_ROOT = Path(__file__).resolve().parent
-
-
-def _bootstrap_env_from_dotenv() -> None:
-    """Load ``RobustVideoMatting/.env`` so Stripe keys exist when this module is imported (same folder as api_server)."""
-    p = APP_ROOT / ".env"
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv(p, override=False)
-    except ImportError:
-        if not p.is_file():
-            return
-        try:
-            raw = p.read_text(encoding="utf-8")
-        except OSError:
-            return
-        for line in raw.splitlines():
-            s = line.strip()
-            if not s or s.startswith("#") or "=" not in s:
-                continue
-            key, _, val = s.partition("=")
-            key = key.strip()
-            if not key or key in os.environ:
-                continue
-            val = val.strip().strip("'").strip('"')
-            os.environ[key] = val
-
-
-_bootstrap_env_from_dotenv()
-
 OUTPUTS_DIR = Path(os.environ.get("RVM_OUTPUTS_DIR", str(APP_ROOT / "api_outputs"))).resolve()
 TEMPLATES_DIR = APP_ROOT / "templates"
 SESSION_SECRET = os.environ.get("RVM_SESSION_SECRET", "dev-change-me-use-long-random-string").encode()
@@ -262,9 +230,7 @@ def _session_user(request: Request):
         return None
     email = (request.session.get("login_label") or "you@formloop.app").strip()
     request.session.setdefault("plan_tier", "free")
-    tier = effective_plan_tier(request)
-    bill = read_billing(str(uid))
-    cust = bill.stripe_customer_id if bill else None
+    tier = plan_tier_from_session(dict(request.session))
     return SimpleNamespace(
         id=str(uid),
         email=email,
@@ -273,7 +239,7 @@ def _session_user(request: Request):
         plan_label=plan_display_name(tier),
         gif_limit=gif_limit_for_tier(tier),
         payment_status="none",
-        stripe_customer_id=cust,
+        stripe_customer_id=None,
         created_at=float(request.session.get("member_since_ts") or time.time()),
     )
 
@@ -347,7 +313,7 @@ async def dashboard_home(request: Request):
     else:
         all_gifs = _user_gif_entries(request, limit=None)
         n = len(all_gifs)
-        used_count = read_quota_usage(str(user.id), billing_period_key_for_uid(str(user.id)))
+        used_count = read_owner_usage_count(str(user.id))
         recent = _user_gif_entries(request, limit=12)
     account_email = ""
     account_name = ""
@@ -390,7 +356,7 @@ async def dashboard_gifs(request: Request):
     tier = getattr(user, "plan_tier", "free") or "free"
     gif_limit = getattr(user, "gif_limit", None)
     n = len(items)
-    used_count = 0 if guest_mode else read_quota_usage(str(user.id), billing_period_key_for_uid(str(user.id)))
+    used_count = 0 if guest_mode else read_owner_usage_count(str(user.id))
     at_quota = not guest_mode and gif_limit is not None and used_count >= gif_limit
     return templates.TemplateResponse(
         "gifs.html",
@@ -432,7 +398,7 @@ async def profile_page(request: Request):
         return RedirectResponse("/auth/login?next=/profile", status_code=302)
     items = _user_gif_entries(request, limit=None)
     n = len(items)
-    used_count = read_quota_usage(str(user.id), billing_period_key_for_uid(str(user.id)))
+    used_count = read_owner_usage_count(str(user.id))
     webm_ready = 0
     for it in items:
         try:
@@ -489,66 +455,36 @@ async def profile_page(request: Request):
 
 @router.get("/subscription", response_class=HTMLResponse)
 async def subscription_page(request: Request):
-    from stripe_integration import ensure_stripe_env
-
-    ensure_stripe_env()
     user = _session_user(request)
     guest_mode = user is None
     if guest_mode:
         user = _guest_user()
-    e = (request.query_params.get("e") or "").strip().lower()
-    if e == "no_stripe" and (os.environ.get("STRIPE_SECRET_KEY") or "").strip():
-        return RedirectResponse("/subscription", status_code=302)
-    paid_plans: list[dict[str, Any]] = []
-    for p in PLANS_ORDERED:
-        row = plan_dict_for_template(p)
-        try:
-            from stripe_integration import fetch_plan_display_prices
-
-            stripe_row = await asyncio.to_thread(fetch_plan_display_prices, p.key)
-            if stripe_row:
-                row.update(stripe_row)
-        except Exception:
-            _log.debug("Stripe display prices unavailable for %s", p.key, exc_info=True)
-        paid_plans.append(row)
-    header_discount_pct = (
-        max(int(pl.get("yearly_discount_pct") or 0) for pl in paid_plans)
-        if paid_plans
-        else int(YEARLY_DISCOUNT * 100)
+    sr = bool(os.environ.get("STRIPE_SECRET_KEY", "").strip())
+    paid_plans = [plan_dict_for_template(p) for p in PLANS_ORDERED]
+    stripe_price_help_needed = (not sr) or not any(
+        bool(p.get("has_monthly") or p.get("has_yearly")) for p in paid_plans
     )
     notice = None
+    e = (request.query_params.get("e") or "").strip().lower()
     if e == "no_stripe":
-        notice = (
-            "STRIPE_SECRET_KEY is still missing after reading RobustVideoMatting/.env. "
-            "Put the key in that file on this machine or set STRIPE_SECRET_KEY in the host/container environment."
-        )
+        notice = "Checkout isn’t enabled on this server yet — paid plans will appear here once billing is connected."
     elif e == "no_price":
         notice = "That billing option isn’t available yet — try the other period or check back later."
     elif e == "bad_plan":
         notice = "Unknown plan. Pick Starter, Pro, or Unlimited."
     elif e == "checkout_pending":
         notice = "Checkout is almost ready — payment will complete here once the server finishes the billing step."
-    elif e == "canceled":
-        notice = "Checkout was canceled. No charge was made."
-    elif e == "bad_session":
-        notice = "Missing checkout session. Open Subscription and try again."
-    elif e == "verify_failed":
-        notice = "We could not verify that payment session. Contact support if you were charged."
-    elif e == "wrong_user":
-        notice = "That checkout session does not match your signed-in account."
-    elif e == "checkout_error":
-        notice = "Checkout could not be started. Check Stripe keys and that each Product has monthly/yearly Prices."
-    elif e == "success":
-        notice = "Welcome to your paid plan — your higher GIF quota and watermark-free exports are active."
     return templates.TemplateResponse(
         "subscription.html",
         {
             "request": request,
             "user": user,
             "guest_mode": guest_mode,
+            "stripe_ready": sr,
             "paid_plans": paid_plans,
             "free_tier_bullets": free_tier_bullets(),
-            "header_discount_pct": header_discount_pct,
+            "yearly_discount_pct": int(YEARLY_DISCOUNT * 100),
+            "stripe_price_help_needed": stripe_price_help_needed,
             "upgrade_notice": notice,
         },
     )
@@ -564,66 +500,16 @@ async def subscription_checkout(
     if not user:
         return RedirectResponse("/auth/login?next=/subscription", status_code=302)
     base = str(request.base_url).rstrip("/")
-    from stripe_integration import ensure_stripe_env
-
-    ensure_stripe_env()
     if not os.environ.get("STRIPE_SECRET_KEY", "").strip():
         return RedirectResponse(f"{base}/subscription?e=no_stripe", status_code=302)
     spec = plan_spec_by_key(plan)
     if not spec:
         return RedirectResponse(f"{base}/subscription?e=bad_plan", status_code=302)
     yearly = (billing or "").strip().lower() in ("yearly", "annual", "year")
-    bill = read_billing(str(user.id))
-    existing = bill.stripe_customer_id if bill else None
-    try:
-        from stripe_integration import create_subscription_checkout_session
-
-        sess = await asyncio.to_thread(
-            create_subscription_checkout_session,
-            uid=str(user.id),
-            email=str(getattr(user, "email", "") or ""),
-            plan_key=str(spec.key),
-            yearly=yearly,
-            public_base=base,
-            existing_customer_id=existing,
-        )
-    except ValueError as exc:
-        _log.warning("Stripe checkout: bad price/plan — %s", exc)
+    pid = stripe_price_id(spec, yearly=yearly)
+    if not pid:
         return RedirectResponse(f"{base}/subscription?e=no_price", status_code=302)
-    except Exception:
-        _log.exception("Stripe checkout failed (see server log)")
-        return RedirectResponse(f"{base}/subscription?e=checkout_error", status_code=302)
-    url = getattr(sess, "url", None) or (sess.get("url") if isinstance(sess, dict) else None)
-    if not url:
-        return RedirectResponse(f"{base}/subscription?e=checkout_error", status_code=302)
-    return RedirectResponse(str(url), status_code=303)
-
-
-@router.get("/subscription/success", response_class=HTMLResponse)
-async def subscription_success(request: Request, session_id: str = ""):
-    user = _session_user(request)
-    if not user or not str(getattr(user, "id", "") or "").strip():
-        return RedirectResponse("/auth/login?next=/subscription", status_code=302)
-    base = str(request.base_url).rstrip("/")
-    sid = (session_id or request.query_params.get("session_id") or "").strip()
-    if not sid:
-        return RedirectResponse(f"{base}/subscription?e=bad_session", status_code=302)
-    from stripe_integration import ensure_stripe_env
-
-    ensure_stripe_env()
-    if not os.environ.get("STRIPE_SECRET_KEY", "").strip():
-        return RedirectResponse(f"{base}/subscription?e=no_stripe", status_code=302)
-    try:
-        from stripe_integration import fulfill_checkout_session
-
-        uid_f, plan_key = await asyncio.to_thread(fulfill_checkout_session, sid)
-    except Exception:
-        return RedirectResponse(f"{base}/subscription?e=verify_failed", status_code=302)
-    if not uid_f or uid_f != str(user.id):
-        return RedirectResponse(f"{base}/subscription?e=wrong_user", status_code=302)
-    if plan_key:
-        request.session["plan_tier"] = plan_key
-    return RedirectResponse(f"{base}/subscription?e=success", status_code=302)
+    return RedirectResponse(f"{base}/subscription?e=checkout_pending", status_code=302)
 
 
 @router.get("/upgrade", response_class=HTMLResponse)

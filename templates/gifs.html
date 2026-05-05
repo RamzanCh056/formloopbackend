@@ -63,7 +63,7 @@
   {% for it in items %}
   <article class="group relative rounded-xl p-px bg-gradient-to-b from-white/[0.1] to-white/[0.02] hover:from-indigo-500/28 hover:to-violet-500/12 transition-all duration-300 shadow-card hover:shadow-glow flex flex-col">
     <div class="rounded-[11px] bg-elevated/95 border border-white/[0.04] overflow-hidden flex flex-col h-full">
-      <div class="relative aspect-[9/16] fl-alpha-checker overflow-hidden ring-1 ring-inset ring-white/[0.06]">
+      <div class="relative aspect-[9/16] bg-zinc-950 overflow-hidden">
         <a href="{{ it.gif_url }}" target="_blank" rel="noopener" class="absolute inset-0 z-10 block">
           <img data-preview-gif="{{ it.job_id }}" src="{{ it.gif_url }}" alt="" class="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]" loading="lazy" />
         </a>

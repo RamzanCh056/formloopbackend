@@ -1,9 +1,8 @@
 """Optional Firebase Storage uploads using the Admin SDK (service account).
 
 Set ``GOOGLE_APPLICATION_CREDENTIALS`` to a JSON key path, or set
-``FIREBASE_SERVICE_ACCOUNT_JSON`` / ``FIREBASE_CONFIG`` to the service-account JSON.
-Multiline ``FIREBASE_CONFIG`` in ``RobustVideoMatting/.env`` (value starts on the line after ``FIREBASE_CONFIG=``)
-is parsed via ``JSONDecoder.raw_decode``. Bucket from ``FIREBASE_BUCKET`` or web config.
+``FIREBASE_SERVICE_ACCOUNT_JSON`` to the full JSON string. Bucket comes from
+``get_firebase_web_config()`` / ``FIREBASE_STORAGE_BUCKET``.
 
 If credentials are missing, upload helpers are no-ops and callers fall back to
 local API URLs.
@@ -25,42 +24,6 @@ _log = logging.getLogger(__name__)
 _lock = threading.Lock()
 _ready: bool | None = None
 
-_APP_DIR = Path(__file__).resolve().parent
-
-
-def _credential_dict_from_env_firebase_config() -> dict | None:
-    fc = (os.environ.get("FIREBASE_CONFIG") or "").strip()
-    if not fc.startswith("{"):
-        return None
-    try:
-        return json.loads(fc)
-    except json.JSONDecodeError:
-        return None
-
-
-def _credential_dict_from_dotenv_multiline() -> dict | None:
-    """When .env has ``FIREBASE_CONFIG=`` then JSON on following lines (dotenv cannot load that into env)."""
-    path = _APP_DIR / ".env"
-    if not path.is_file():
-        return None
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    key = "FIREBASE_CONFIG="
-    i = raw.find(key)
-    if i < 0:
-        return None
-    tail = raw[i + len(key) :].lstrip(" \t\r\n")
-    if not tail.startswith("{"):
-        return None
-    try:
-        obj, _end = json.JSONDecoder().raw_decode(tail)
-    except json.JSONDecodeError as exc:
-        _log.warning("FIREBASE_CONFIG in .env is not valid JSON: %s", exc)
-        return None
-    return obj if isinstance(obj, dict) else None
-
 
 def firebase_storage_ready() -> bool:
     """True when Admin SDK is initialized and Storage is available."""
@@ -79,21 +42,7 @@ def firebase_storage_ready() -> bool:
 def _init_locked() -> bool:
     json_str = (os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON") or "").strip()
     cred_path = (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
-
-    cred_dict: dict | None = None
-    if json_str:
-        try:
-            parsed = json.loads(json_str)
-            if isinstance(parsed, dict):
-                cred_dict = parsed
-        except json.JSONDecodeError:
-            pass
-    if cred_dict is None:
-        cred_dict = _credential_dict_from_env_firebase_config()
-    if cred_dict is None:
-        cred_dict = _credential_dict_from_dotenv_multiline()
-
-    if cred_dict is None and not cred_path:
+    if not json_str and not cred_path:
         return False
     try:
         import firebase_admin
@@ -102,14 +51,14 @@ def _init_locked() -> bool:
         _log.warning("firebase-admin not installed; Storage uploads disabled.")
         return False
     cfg = get_firebase_web_config()
-    bucket_name = (os.environ.get("FIREBASE_BUCKET") or cfg.get("storageBucket") or "").strip()
+    bucket_name = (cfg.get("storageBucket") or "").strip()
     if not bucket_name:
         return False
     try:
         firebase_admin.get_app()
     except ValueError:
-        if cred_dict is not None:
-            cred = credentials.Certificate(cred_dict)
+        if json_str:
+            cred = credentials.Certificate(json.loads(json_str))
         else:
             cred = credentials.Certificate(cred_path)
         firebase_admin.initialize_app(cred, {"storageBucket": bucket_name})

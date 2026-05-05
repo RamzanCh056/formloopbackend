@@ -32,58 +32,26 @@ import time
 import uuid
 from pathlib import Path
 
-APP_ROOT = Path(__file__).resolve().parent
-
-
-def _load_env_file(path: Path) -> None:
-    """Populate os.environ from a .env file (first '=' splits key / value)."""
-    if not path.is_file():
-        return
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        return
-    for line in raw.splitlines():
-        s = line.strip()
-        if not s or s.startswith("#"):
-            continue
-        if "=" not in s:
-            continue
-        key, _, val = s.partition("=")
-        key = key.strip()
-        if not key or key in os.environ:
-            continue
-        val = val.strip().strip("'").strip('"')
-        os.environ[key] = val
-
-
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv(APP_ROOT / ".env")
-except ImportError:
-    _load_env_file(APP_ROOT / ".env")
-
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from billing_plans import exports_watermark_for_tier, gif_limit_for_tier
+from billing_plans import exports_watermark_for_tier, gif_limit_for_tier, plan_tier_from_session
 from gif_watermark import apply_png_watermark_to_gif, resolve_watermark_png
 from output_job_store import (
-    increment_quota_usage,
+    increment_owner_usage,
     mark_job_saved,
     read_job_owner,
-    read_quota_usage,
+    read_owner_usage_count,
     write_job_owner,
 )
-from user_billing import billing_period_key_for_uid, effective_plan_tier
 from process_video import _assert_input_has_video, _pick_device, _python_for_inference
 from web_ui_routes import SESSION_SECRET, router as ui_router
 
 _log = logging.getLogger(__name__)
+APP_ROOT = Path(__file__).resolve().parent
 PROCESS_SCRIPT = APP_ROOT / "process_video.py"
 PROCESS_REMBG_SCRIPT = APP_ROOT / "process_video_rembg.py"
 PROCESS_PRO_SCRIPT = APP_ROOT / "process_video_pro.py"
@@ -685,43 +653,9 @@ app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 app.include_router(ui_router)
 
 
-@app.post("/api/stripe/webhook")
-async def stripe_webhook(request: Request) -> JSONResponse:
-    """Stripe sends subscription lifecycle events here. Set STRIPE_WEBHOOK_SECRET in Dashboard → webhook."""
-    import stripe
-
-    from stripe_integration import ensure_stripe_env, handle_webhook_event
-
-    ensure_stripe_env()
-    secret = (os.environ.get("STRIPE_WEBHOOK_SECRET") or "").strip()
-    if not secret:
-        raise HTTPException(status_code=503, detail="STRIPE_WEBHOOK_SECRET not configured")
-    payload = await request.body()
-    sig = request.headers.get("stripe-signature") or ""
-    try:
-        event = stripe.Webhook.construct_event(payload, sig, secret)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid webhook payload") from exc
-    except Exception as exc:
-        if "Signature" in type(exc).__name__ or "signature" in str(exc).lower():
-            raise HTTPException(status_code=400, detail="Invalid webhook signature") from exc
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    await asyncio.to_thread(handle_webhook_event, event)
-    return JSONResponse({"received": True})
-
-
 @app.on_event("startup")
 def _startup() -> None:
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    if (os.environ.get("STRIPE_SECRET_KEY") or "").strip():
-        _log.info("Stripe: STRIPE_SECRET_KEY loaded — checkout enabled.")
-        if not (os.environ.get("STRIPE_WEBHOOK_SECRET") or "").strip():
-            _log.warning(
-                "Stripe: STRIPE_WEBHOOK_SECRET is unset — POST /api/stripe/webhook returns 503 until "
-                "you add the signing secret from Stripe Dashboard → Webhooks (same .env as the API)."
-            )
-    else:
-        _log.info("Stripe: STRIPE_SECRET_KEY unset — paid checkout disabled (set in RobustVideoMatting/.env).")
 
 
 @app.get("/health")
@@ -854,7 +788,7 @@ async def _run_job_async(
                     write_job_owner(job_id, uid)
                 except ValueError:
                     pass
-                increment_quota_usage(uid, billing_period_key_for_uid(uid))
+                increment_owner_usage(uid)
                 if exports_watermark_for_tier(tier):
                     gif_path = OUTPUTS_DIR / job_id / "matte.gif"
                     wm = resolve_watermark_png(APP_ROOT)
@@ -928,10 +862,10 @@ async def matte_video_start(
     tier = "free"
     if uid:
         request.session.setdefault("plan_tier", "free")
-        tier = effective_plan_tier(request)
+        tier = plan_tier_from_session(dict(request.session))
         cap = gif_limit_for_tier(tier)
         if cap is not None:
-            used = read_quota_usage(uid, billing_period_key_for_uid(uid))
+            used = read_owner_usage_count(uid)
             if used >= cap:
                 raise HTTPException(
                     status_code=403,
@@ -1048,10 +982,10 @@ async def matte_video(
     tier = "free"
     if uid:
         request.session.setdefault("plan_tier", "free")
-        tier = effective_plan_tier(request)
+        tier = plan_tier_from_session(dict(request.session))
         cap = gif_limit_for_tier(tier)
         if cap is not None:
-            used = read_quota_usage(uid, billing_period_key_for_uid(uid))
+            used = read_owner_usage_count(uid)
             if used >= cap:
                 raise HTTPException(
                     status_code=403,
@@ -1101,7 +1035,7 @@ async def matte_video(
             write_job_owner(job_id, uid)
         except ValueError:
             pass
-        increment_quota_usage(uid, billing_period_key_for_uid(uid))
+        increment_owner_usage(uid)
         if exports_watermark_for_tier(tier):
             gif_path = OUTPUTS_DIR / job_id / "matte.gif"
             wm = resolve_watermark_png(APP_ROOT)
