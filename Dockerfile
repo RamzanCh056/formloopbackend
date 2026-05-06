@@ -1,8 +1,8 @@
-# syntax=docker/dockerfile:1.4
-FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
+# syntax=docker/dockerfile:1
+FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
 WORKDIR /app
-ARG CACHE_BUST=20260506_1609
+ARG CACHE_BUST=20260506_1725
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
@@ -13,8 +13,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install \
-    torch==2.4.0 \
-    torchvision==0.19.0 \
+    torch==2.4.1 \
+    torchvision==0.19.1 \
     transformers \
     accelerate \
     ultralytics \
