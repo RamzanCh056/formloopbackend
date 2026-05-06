@@ -43,12 +43,15 @@ def handler(job):
     video_b64     = job_input.get("video")
     video_url     = job_input.get("video_url")
     exercise_name = job_input.get("exercise_name", "exercise")
-    gif_width     = job_input.get("gif_width", 640)
-    gif_fps       = job_input.get("gif_fps", 12)
+    gif_width     = max(320, min(1280, int(job_input.get("gif_width", 640))))
+    gif_fps       = max(1, min(30, int(job_input.get("gif_fps", 12))))
     dilation      = job_input.get("dilation", 18)
     conf          = job_input.get("conf", 0.20)
     # True = BiRefNet-only (fast). False = full pipeline with YOLO pose/seg (slower, better props/hands).
     pro_fast_raw = job_input.get("pro_fast_mode")
+    if pro_fast_raw is None:
+        # Compatibility alias used by some clients.
+        pro_fast_raw = job_input.get("fast_mode")
     if pro_fast_raw is None:
         pro_fast_mode = os.environ.get("RVM_PRO_FAST_MODE", "1").strip().lower() not in {
             "0",
