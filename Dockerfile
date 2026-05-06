@@ -2,7 +2,7 @@
 FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
 WORKDIR /app
-ARG CACHE_BUST=20260506_1725
+ARG CACHE_BUST=20260506_1738
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
@@ -12,12 +12,15 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install \
+RUN pip install --upgrade --force-reinstall \
+    --index-url https://download.pytorch.org/whl/cu121 \
     torch==2.4.1 \
-    torchvision==0.19.1 \
+    torchvision==0.19.1
+
+RUN pip install \
     transformers \
     accelerate \
-    ultralytics \
+    ultralytics==8.3.0 \
     requests \
     opencv-python-headless \
     pillow \
