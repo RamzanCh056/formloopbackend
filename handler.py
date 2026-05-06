@@ -102,7 +102,7 @@ def handler(job):
             "--gif-fps",   str(gif_fps),
             "--dilation",  str(dilation),
             "--conf",      str(conf),
-            "--device",    "cuda",
+            "--device",    os.environ.get("RVM_DEVICE", "auto"),
         ]
         if pro_fast_mode:
             cmd.append("--no-yolo")

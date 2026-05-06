@@ -70,12 +70,32 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _cuda_runtime_usable() -> bool:
+    """True only if CUDA alloc + sync works (driver matches PyTorch CUDA build)."""
+    if not torch.cuda.is_available():
+        return False
+    try:
+        x = torch.zeros(256, 256, device="cuda")
+        x = x * 1.001
+        torch.cuda.synchronize()
+        del x
+        return True
+    except Exception:
+        return False
+
+
 def pick_device(pref: str) -> torch.device:
     if pref in ("cuda", "mps", "cpu"):
+        if pref == "cuda" and not _cuda_runtime_usable():
+            print(
+                "[WARN] CUDA unusable (driver / PyTorch CUDA mismatch); using CPU",
+                flush=True,
+            )
+            return torch.device("cpu")
         return torch.device(pref)
     if pref != "auto":
         return torch.device(pref)
-    if torch.cuda.is_available():
+    if _cuda_runtime_usable():
         return torch.device("cuda")
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return torch.device("mps")
@@ -340,13 +360,41 @@ def main() -> None:
 
     print("[BiRefNet] loading ZhengPeng7/BiRefNet …", flush=True)
     try:
-        birefnet = AutoModelForImageSegmentation.from_pretrained(
-            "ZhengPeng7/BiRefNet",
-            trust_remote_code=True,
-        ).to(device)
+        # Keep checkpoint load on CPU; HF / remote code can otherwise touch CUDA during load
+        # (progress hits 100% then fails) before our .to(device) fallback runs.
+        try:
+            birefnet = AutoModelForImageSegmentation.from_pretrained(
+                "ZhengPeng7/BiRefNet",
+                trust_remote_code=True,
+                device_map="cpu",
+            )
+        except Exception as load_exc:
+            if "device_map" not in str(load_exc).lower():
+                raise
+            print(
+                "[WARN] BiRefNet device_map=cpu unavailable; retrying default load …",
+                flush=True,
+            )
+            birefnet = AutoModelForImageSegmentation.from_pretrained(
+                "ZhengPeng7/BiRefNet",
+                trust_remote_code=True,
+            )
         # MPS/CUDA half weights vs float32 inputs → keep matting in float32 for stability
         birefnet = birefnet.float()
         birefnet.eval()
+        try:
+            birefnet = birefnet.to(device)
+        except Exception as move_exc:
+            if device.type != "cuda":
+                raise SystemExit(f"BiRefNet load failed: {move_exc}") from move_exc
+            print(
+                f"[WARN] BiRefNet could not use CUDA ({move_exc}); using CPU",
+                flush=True,
+            )
+            device = torch.device("cpu")
+            birefnet = birefnet.to(device)
+    except SystemExit:
+        raise
     except Exception as exc:
         raise SystemExit(f"BiRefNet load failed: {exc}") from exc
 
