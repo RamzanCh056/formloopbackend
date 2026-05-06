@@ -10,10 +10,9 @@ from firebase_admin import credentials, storage
 
 try:
     import torch
-    import torchvision
-    print(f"[Env] torch={torch.__version__} torchvision={torchvision.__version__}")
+    print(f"[Env] torch={torch.__version__}")
 except Exception as e:
-    print(f"[Env] torch/torchvision import warning: {e}")
+    print(f"[Env] torch import warning: {e}")
 
 # Initialize Firebase
 firebase_config_str = os.environ.get("FIREBASE_CONFIG", "{}")

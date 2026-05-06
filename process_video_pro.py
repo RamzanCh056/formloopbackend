@@ -18,7 +18,6 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
-from torchvision import transforms
 from transformers import AutoModelForImageSegmentation
 
 # ---------------------------------------------------------------------------
@@ -91,14 +90,18 @@ def resize_infer_bgr(frame_bgr: np.ndarray, target_w: int = INFER_WIDTH) -> np.n
     return cv2.resize(frame_bgr, (target_w, nh), interpolation=cv2.INTER_AREA)
 
 
-def build_transform_img() -> transforms.Compose:
-    return transforms.Compose(
-        [
-            transforms.Resize((1024, 1024)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ]
-    )
+def build_transform_img():
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
+
+    def _transform(pil_img: Image.Image) -> torch.Tensor:
+        img = pil_img.resize((1024, 1024), Image.Resampling.BILINEAR)
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+        arr = (arr - mean) / std
+        arr = np.transpose(arr, (2, 0, 1))
+        return torch.from_numpy(arr)
+
+    return _transform
 
 
 def get_alpha(frame_bgr: np.ndarray, model: torch.nn.Module, device: torch.device, transform_img) -> np.ndarray:
