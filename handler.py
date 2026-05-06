@@ -55,11 +55,15 @@ def handler(job):
     dilation      = job_input.get("dilation", 18)
     conf          = job_input.get("conf", 0.20)
     # True = BiRefNet-only (fast). False = full pipeline with YOLO pose/seg (slower, better props/hands).
+    # Stability-first default: keep YOLO disabled unless explicitly allowed.
+    force_fast = os.environ.get("RVM_FORCE_FAST_MODE", "1").strip().lower() not in {"0", "false", "no"}
     pro_fast_raw = job_input.get("pro_fast_mode")
     if pro_fast_raw is None:
         # Compatibility alias used by some clients.
         pro_fast_raw = job_input.get("fast_mode")
-    if pro_fast_raw is None:
+    if force_fast:
+        pro_fast_mode = True
+    elif pro_fast_raw is None:
         pro_fast_mode = os.environ.get("RVM_PRO_FAST_MODE", "1").strip().lower() not in {
             "0",
             "false",

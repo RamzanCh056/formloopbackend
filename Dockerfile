@@ -2,9 +2,10 @@
 FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
 WORKDIR /app
-ARG CACHE_BUST=20260506_1738
+ARG CACHE_BUST=20260506_1743
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    RVM_FORCE_FAST_MODE=1
 
 RUN apt-get update && apt-get install -y \
     ffmpeg \
