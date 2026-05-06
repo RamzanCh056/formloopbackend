@@ -2,7 +2,9 @@
 FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
 
 WORKDIR /app
-ARG CACHE_BUST=20260505_1935
+ARG CACHE_BUST=20260506_1609
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y \
     ffmpeg \
@@ -10,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir \
+RUN pip install \
     transformers \
     accelerate \
     ultralytics \
