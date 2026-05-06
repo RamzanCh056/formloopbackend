@@ -20,7 +20,6 @@ import torch
 from PIL import Image
 from torchvision import transforms
 from transformers import AutoModelForImageSegmentation
-from ultralytics import YOLO
 
 # ---------------------------------------------------------------------------
 EXCLUDE = {
@@ -116,7 +115,7 @@ def get_alpha(frame_bgr: np.ndarray, model: torch.nn.Module, device: torch.devic
     return cv2.resize(alpha, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
-def get_wrists(frame_bgr: np.ndarray, pose_model: YOLO) -> list[tuple[int, int]]:
+def get_wrists(frame_bgr: np.ndarray, pose_model) -> list[tuple[int, int]]:
     results = pose_model(frame_bgr, verbose=False)
     wrists: list[tuple[int, int]] = []
     if not results or results[0].keypoints is None:
@@ -136,7 +135,7 @@ def get_held_mask(
     wrists: list[tuple[int, int]],
     frame_h: int,
     frame_w: int,
-    seg_model: YOLO,
+    seg_model,
 ) -> np.ndarray | None:
     if not wrists:
         return None
@@ -350,15 +349,21 @@ def main() -> None:
 
     transform_img = build_transform_img()
 
-    pose_model: YOLO | None = None
-    seg_model: YOLO | None = None
+    pose_model = None
+    seg_model = None
     if not args.no_yolo:
-        print("[YOLO] loading yolov8n-pose.pt …", flush=True)
-        pose_model = YOLO("yolov8n-pose.pt")
-        pose_model.overrides["conf"] = float(args.conf)
-        print("[YOLO] loading yolov8n-seg.pt …", flush=True)
-        seg_model = YOLO("yolov8n-seg.pt")
-        seg_model.overrides["conf"] = float(args.conf)
+        try:
+            from ultralytics import YOLO
+
+            print("[YOLO] loading yolov8n-pose.pt …", flush=True)
+            pose_model = YOLO("yolov8n-pose.pt")
+            pose_model.overrides["conf"] = float(args.conf)
+            print("[YOLO] loading yolov8n-seg.pt …", flush=True)
+            seg_model = YOLO("yolov8n-seg.pt")
+            seg_model.overrides["conf"] = float(args.conf)
+        except Exception as exc:
+            print(f"[YOLO] disabled (load failed): {exc}", flush=True)
+            args.no_yolo = True
 
     cap = cv2.VideoCapture(str(inp))
     if not cap.isOpened():
