@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install \
+    torch==2.4.0 \
+    torchvision==0.19.0 \
     transformers \
     accelerate \
     ultralytics \

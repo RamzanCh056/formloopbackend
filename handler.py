@@ -8,6 +8,13 @@ import requests
 import firebase_admin
 from firebase_admin import credentials, storage
 
+try:
+    import torch
+    import torchvision
+    print(f"[Env] torch={torch.__version__} torchvision={torchvision.__version__}")
+except Exception as e:
+    print(f"[Env] torch/torchvision import warning: {e}")
+
 # Initialize Firebase
 firebase_config_str = os.environ.get("FIREBASE_CONFIG", "{}")
 firebase_bucket = os.environ.get("FIREBASE_BUCKET", "")
