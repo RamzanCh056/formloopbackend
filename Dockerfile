@@ -2,7 +2,7 @@
 FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
 WORKDIR /app
-ARG CACHE_BUST=20260506_1830
+ARG CACHE_BUST=20260506_1919
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     RVM_FORCE_FAST_MODE=1
@@ -17,6 +17,8 @@ RUN pip install --upgrade --force-reinstall \
     --index-url https://download.pytorch.org/whl/cu121 \
     torch==2.4.1 \
     torchaudio==2.4.1
+
+RUN pip uninstall -y torchvision || true
 
 RUN pip install \
     transformers \
