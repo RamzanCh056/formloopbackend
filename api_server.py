@@ -505,31 +505,14 @@ def _persist_runpod_job_artifacts(job_id: str, payload: dict) -> None:
         return
     work = OUTPUTS_DIR / job_id
     work.mkdir(parents=True, exist_ok=True)
-    gif_url = d.get("gif_url")
-    if isinstance(gif_url, str) and gif_url.startswith("http"):
-        try:
-            r = requests.get(gif_url, timeout=180)
-            r.raise_for_status()
-            data = r.content
-            if len(data) > 64:
-                (work / "matte.gif").write_bytes(data)
-        except Exception as exc:
-            _log.warning("RunPod: could not persist GIF for job_id=%s: %s", job_id, exc)
-    elif isinstance(d.get("gif_b64"), str) and d["gif_b64"].strip():
+    if isinstance(d.get("gif_b64"), str) and d["gif_b64"].strip():
         try:
             (work / "matte.gif").write_bytes(base64.b64decode(d["gif_b64"]))
         except Exception as exc:
             _log.warning("RunPod: could not decode/persist GIF b64 for job_id=%s: %s", job_id, exc)
-    wu = d.get("webm_url")
-    if isinstance(wu, str) and wu.startswith("http"):
-        try:
-            r = requests.get(wu, timeout=300)
-            r.raise_for_status()
-            data = r.content
-            if len(data) > 256:
-                (work / "matte_transparent.webm").write_bytes(data)
-        except Exception as exc:
-            _log.warning("RunPod: could not persist WebM for job_id=%s: %s", job_id, exc)
+    gu = d.get("gif_url") if isinstance(d.get("gif_url"), str) else None
+    wu = d.get("webm_url") if isinstance(d.get("webm_url"), str) else None
+    _ensure_job_assets_from_client_urls(work, gu, wu)
 
 
 def _fetch_remote_asset_if_missing(url: str | None, dest: Path, *, min_size: int, timeout: int) -> bool:
@@ -542,18 +525,25 @@ def _fetch_remote_asset_if_missing(url: str | None, dest: Path, *, min_size: int
         "User-Agent": "FormLoop-Server/1.0",
         "Accept": "*/*",
     }
-    try:
-        r = requests.get(u, timeout=timeout, headers=hdrs, allow_redirects=True)
-        r.raise_for_status()
-        data = r.content
-        if len(data) >= min_size:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(data)
-            _log.info("Fetched remote asset %s -> %s (%s bytes)", u[:80], dest.name, len(data))
-            return True
-        _log.warning("Remote fetch too small (%s bytes): %s", len(data), u[:96])
-    except Exception as exc:
-        _log.warning("Remote fetch failed %s -> %s: %s", u[:96], dest.name, exc)
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            r = requests.get(u, timeout=timeout, headers=hdrs, allow_redirects=True)
+            r.raise_for_status()
+            data = r.content
+            if len(data) >= min_size:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+                _log.info("Fetched remote asset %s -> %s (%s bytes)", u[:80], dest.name, len(data))
+                return True
+            _log.warning("Remote fetch too small (%s bytes): %s", len(data), u[:96])
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(0.4 * (attempt + 1))
+            else:
+                _log.warning("Remote fetch failed after 3 tries %s -> %s: %s", u[:96], dest.name, exc)
     return dest.is_file() and dest.stat().st_size >= min_size
 
 
@@ -1099,17 +1089,17 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
     out: dict = {"ok": True, "job_id": job_id}
     if export_id:
         try:
-            from firebase_storage_admin import firebase_storage_ready, upload_user_export_media
+            from firebase_storage_admin import (
+                firebase_storage_ready,
+                upload_user_export_media,
+                upload_user_export_media_from_urls,
+            )
 
             if firebase_storage_ready():
                 gif_path = job_dir / "matte.gif"
                 webm_path = job_dir / "matte_transparent.webm"
-                if not gif_path.is_file():
-                    out["storageError"] = (
-                        "matte.gif not on server — could not download from gif_url. "
-                        "Sign-in library still updated; use the RunPod/Firebase GIF link in your app."
-                    )
-                else:
+                urls = None
+                if gif_path.is_file():
                     urls = await asyncio.to_thread(
                         upload_user_export_media,
                         uid=uid,
@@ -1117,6 +1107,20 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
                         gif_path=gif_path,
                         webm_path=webm_path if webm_path.is_file() else None,
                     )
+                elif gif_remote and gif_remote.startswith(("http://", "https://")):
+                    urls = await asyncio.to_thread(
+                        upload_user_export_media_from_urls,
+                        uid=uid,
+                        export_id=export_id,
+                        gif_url=gif_remote,
+                        webm_url=webm_remote if webm_remote and webm_remote.startswith(("http://", "https://")) else None,
+                    )
+                else:
+                    out["storageError"] = (
+                        "Firebase upload skipped: no matte.gif on disk and no gif_url in save request. "
+                        "Hard-refresh the dashboard and save again with the same clip."
+                    )
+                if urls:
                     (job_dir / _STORAGE_URLS_FILE).write_text(
                         json.dumps(urls, separators=(",", ":")),
                         encoding="utf-8",

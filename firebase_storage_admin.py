@@ -15,10 +15,14 @@ import json
 import logging
 import mimetypes
 import os
+import tempfile
+import time
 import threading
 import uuid
 from pathlib import Path
 from urllib.parse import quote
+
+import requests
 
 from firebase_auth import get_firebase_web_config
 
@@ -157,6 +161,59 @@ def upload_user_export_media(
     if webm_path is not None and webm_path.is_file():
         webm_url = _upload_file(webm_path, f"{base}/matte_transparent.webm", "video/webm")
     return {"gifUrl": gif_url, "webmUrl": webm_url}
+
+
+def upload_user_export_media_from_urls(
+    *,
+    uid: str,
+    export_id: str,
+    gif_url: str,
+    webm_url: str | None,
+) -> dict[str, str | None]:
+    """Download GIF/WebM from HTTPS (RunPod/Firebase public URLs) and upload under ``users/{uid}/exports/{export_id}/``.
+
+    Used when the API disk does not have ``matte.gif`` but the browser still has canonical URLs.
+    """
+    if not firebase_storage_ready():
+        raise RuntimeError("Firebase Storage is not configured")
+    gu = (gif_url or "").strip()
+    if not gu.startswith(("http://", "https://")):
+        raise ValueError("gif_url must be an http(s) URL")
+    base = f"users/{uid}/exports/{export_id}"
+    hdrs = {"User-Agent": "FormLoop-Server/1.0", "Accept": "*/*"}
+
+    def _get(url: str, timeout: int) -> bytes:
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                r = requests.get(url, timeout=timeout, headers=hdrs, allow_redirects=True)
+                r.raise_for_status()
+                return r.content
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep(0.4 * (attempt + 1))
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("download failed")
+
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        gif_local = td_path / "matte.gif"
+        gif_local.write_bytes(_get(gu, 180))
+        if not gif_local.is_file() or gif_local.stat().st_size < 64:
+            raise ValueError("downloaded GIF too small or missing")
+        out_gif = _upload_file(gif_local, f"{base}/matte.gif", "image/gif")
+
+        out_webm: str | None = None
+        wu = (webm_url or "").strip()
+        if wu.startswith(("http://", "https://")):
+            wl = td_path / "matte_transparent.webm"
+            wl.write_bytes(_get(wu, 300))
+            if wl.is_file() and wl.stat().st_size > 64:
+                out_webm = _upload_file(wl, f"{base}/matte_transparent.webm", "video/webm")
+
+    return {"gifUrl": out_gif, "webmUrl": out_webm}
 
 
 def upload_runpod_input_video(*, job_id: str, filename: str, local_path: Path) -> str:
