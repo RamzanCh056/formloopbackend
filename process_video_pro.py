@@ -298,6 +298,24 @@ def _rgba_from_bgr_and_alpha(frame_bgr: np.ndarray, alpha_u8: np.ndarray) -> np.
     return np.dstack([rgb, alpha_u8])
 
 
+def _rgba_whiten_fringe_for_white_backdrop(rgba: np.ndarray) -> np.ndarray:
+    """Keep full alpha; pull RGB toward white in semi-transparent edges so halos look neutral on white."""
+    if rgba.ndim != 3 or rgba.shape[2] != 4:
+        return rgba
+    if os.environ.get("RVM_PRO_GIF_WHITEN_FOR_WHITE", "1").strip().lower() in {"0", "false", "no"}:
+        return rgba
+    strength = float(os.environ.get("RVM_PRO_GIF_WHITEN_STRENGTH", "0.9"))
+    strength = max(0.0, min(1.0, strength))
+    rgb = rgba[..., :3].astype(np.float32)
+    a = rgba[..., 3:4].astype(np.float32) / 255.0
+    t = strength * (1.0 - a)
+    rgb = rgb + (255.0 - rgb) * t
+    return np.concatenate(
+        [np.clip(rgb, 0, 255).astype(np.uint8), rgba[..., 3:4]],
+        axis=-1,
+    )
+
+
 def _decimate_frames_for_gif(
     frames: list[np.ndarray],
     *,
@@ -337,6 +355,10 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
         ow, oh = img.size
         nh = max(1, int(round(oh * width / max(1, ow))))
         img = img.resize((width, nh), resize_f)
+        if not white_bg:
+            arr = np.array(img)
+            arr = _rgba_whiten_fringe_for_white_backdrop(arr)
+            img = Image.fromarray(arr, "RGBA")
         if white_bg:
             base = Image.new("RGBA", img.size, (255, 255, 255, 255))
             flat = Image.alpha_composite(base, img).convert("RGB")
@@ -452,9 +474,19 @@ def run_pipeline(args: argparse.Namespace) -> None:
     transform_img = build_transform_img(biref_side)
 
     _gif_white = os.environ.get("RVM_PRO_GIF_WHITE_BG", "0").strip().lower() not in {"0", "false", "no"}
+    _whiten_edges = os.environ.get("RVM_PRO_GIF_WHITEN_FOR_WHITE", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
     _matte_shrink_px = max(
         0,
-        int(os.environ.get("RVM_PRO_MATTE_SHRINK_PX", "1" if _gif_white else "0")),
+        int(
+            os.environ.get(
+                "RVM_PRO_MATTE_SHRINK_PX",
+                "1" if (_gif_white or _whiten_edges) else "0",
+            )
+        ),
     )
 
     pose_model = None

@@ -77,7 +77,7 @@ def handler(job):
 
     gif_white_raw = job_input.get("gif_white_bg")
     if gif_white_raw is None:
-        gif_white_bg = os.environ.get("RVM_PRO_GIF_WHITE_BG", "1").strip().lower() not in {"0", "false", "no"}
+        gif_white_bg = os.environ.get("RVM_PRO_GIF_WHITE_BG", "0").strip().lower() not in {"0", "false", "no"}
     else:
         gif_white_bg = bool(gif_white_raw)
 
