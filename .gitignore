@@ -1,0 +1,46 @@
+# Secrets - NEVER push these
+.env
+firebase-key.json
+firebase-config.json
+data/user_billing.json
+
+# Model weights
+*.pth
+rvm_mobilenetv3.pth
+rvm_resnet50.pth
+hand_landmarker.task
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+env/
+*.egg-info/
+
+# Video and output files
+*.mp4
+*.mov
+*.avi
+api_outputs/
+*.gif
+
+# Model cache
+.cache/
+yolov8x-seg.pt
+yolov8x-pose.pt
+*.pt
+rembg_frames_*/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log

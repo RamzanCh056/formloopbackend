@@ -42,6 +42,27 @@ EXCLUDE = {
 INFER_WIDTH = 512
 
 
+def _biref_stride(no_yolo: bool) -> int:
+    raw = (os.environ.get("RVM_PRO_BIREFNET_FRAME_STRIDE") or "").strip()
+    if raw:
+        return max(1, int(raw))
+    return 6 if no_yolo else 2
+
+
+def _infer_resize_w(no_yolo: bool) -> int:
+    raw = (os.environ.get("RVM_PRO_INFER_WIDTH") or "").strip()
+    if raw:
+        return max(256, min(768, int(raw)))
+    return 448 if no_yolo else INFER_WIDTH
+
+
+def _birefnet_input_side(no_yolo: bool) -> int:
+    raw = (os.environ.get("RVM_PRO_BIREFNET_SIZE") or "").strip()
+    if raw:
+        return max(512, min(1024, int(raw)))
+    return 768 if no_yolo else 1024
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--input", required=True, help="input video path")
@@ -51,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gif-width", type=int, default=640, help="GIF width in pixels")
     p.add_argument("--gif-fps", type=int, default=15, help="GIF fps")
     p.add_argument("--device", default="auto", help="auto / cuda / mps / cpu")
-    p.add_argument("--dilation", type=int, default=18, help="extra final mask dilation px")
+    p.add_argument("--dilation", type=int, default=12, help="extra final mask dilation px (lower = tighter edge, less bg bleed)")
     p.add_argument("--conf", type=float, default=0.20, help="YOLO default confidence (seg uses 0.08 in crops)")
     p.add_argument(
         "--rvm-downsample",
@@ -72,12 +93,32 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _cuda_runtime_usable() -> bool:
+    """True only if CUDA alloc + sync works (driver matches PyTorch CUDA build)."""
+    if not torch.cuda.is_available():
+        return False
+    try:
+        x = torch.zeros(256, 256, device="cuda")
+        x = x * 1.001
+        torch.cuda.synchronize()
+        del x
+        return True
+    except Exception:
+        return False
+
+
 def pick_device(pref: str) -> torch.device:
     if pref in ("cuda", "mps", "cpu"):
+        if pref == "cuda" and not _cuda_runtime_usable():
+            print(
+                "[WARN] CUDA unusable (driver / PyTorch CUDA mismatch); using CPU",
+                flush=True,
+            )
+            return torch.device("cpu")
         return torch.device(pref)
     if pref != "auto":
         return torch.device(pref)
-    if torch.cuda.is_available():
+    if _cuda_runtime_usable():
         return torch.device("cuda")
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return torch.device("mps")
@@ -92,10 +133,11 @@ def resize_infer_bgr(frame_bgr: np.ndarray, target_w: int = INFER_WIDTH) -> np.n
     return cv2.resize(frame_bgr, (target_w, nh), interpolation=cv2.INTER_AREA)
 
 
-def build_transform_img() -> transforms.Compose:
+def build_transform_img(side: int = 1024) -> transforms.Compose:
+    side = max(512, min(1024, int(side)))
     return transforms.Compose(
         [
-            transforms.Resize((1024, 1024)),
+            transforms.Resize((side, side)),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ]
@@ -187,6 +229,10 @@ def get_held_mask(
 
 def combine(birefnet_alpha: np.ndarray, held_mask: np.ndarray | None) -> np.ndarray:
     hard = (birefnet_alpha > 127).astype(np.uint8) * 255
+    opx = max(0, int(os.environ.get("RVM_PRO_MASK_OPEN_PX", "0")))
+    if opx > 0:
+        k0 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * opx + 1, 2 * opx + 1))
+        hard = cv2.morphologyEx(hard, cv2.MORPH_OPEN, k0)
 
     n, labels, stats, _ = cv2.connectedComponentsWithStats(hard, connectivity=8)
     total_px = hard.shape[0] * hard.shape[1]
@@ -253,6 +299,37 @@ def _rgba_from_bgr_and_alpha(frame_bgr: np.ndarray, alpha_u8: np.ndarray) -> np.
     return np.dstack([rgb, alpha_u8])
 
 
+def _alpha_fringe_gamma(alpha_u8: np.ndarray) -> np.ndarray:
+    """Gamma < 1 slightly crushes semi-transparent fringe (cheap halo reduction)."""
+    raw = (os.environ.get("RVM_PRO_ALPHA_FRINGE_GAMMA") or "").strip()
+    if not raw:
+        return alpha_u8
+    g = float(raw)
+    if abs(g - 1.0) < 1e-6:
+        return alpha_u8
+    g = max(0.55, min(1.05, g))
+    a = np.clip((alpha_u8.astype(np.float32) / 255.0) ** g * 255.0, 0, 255).astype(np.uint8)
+    return a
+
+
+def _rgba_whiten_fringe_for_white_backdrop(rgba: np.ndarray) -> np.ndarray:
+    """Keep full alpha; pull RGB toward white in semi-transparent edges so halos look neutral on white."""
+    if rgba.ndim != 3 or rgba.shape[2] != 4:
+        return rgba
+    if os.environ.get("RVM_PRO_GIF_WHITEN_FOR_WHITE", "1").strip().lower() in {"0", "false", "no"}:
+        return rgba
+    strength = float(os.environ.get("RVM_PRO_GIF_WHITEN_STRENGTH", "0.9"))
+    strength = max(0.0, min(1.0, strength))
+    rgb = rgba[..., :3].astype(np.float32)
+    a = rgba[..., 3:4].astype(np.float32) / 255.0
+    t = strength * (1.0 - a)
+    rgb = rgb + (255.0 - rgb) * t
+    return np.concatenate(
+        [np.clip(rgb, 0, 255).astype(np.uint8), rgba[..., 3:4]],
+        axis=-1,
+    )
+
+
 def _decimate_frames_for_gif(
     frames: list[np.ndarray],
     *,
@@ -279,10 +356,15 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
     pil_frames: list[Image.Image] = []
     duration_ms = max(1, int(round(1000.0 / float(max(1, fps)))))
     resize_f = getattr(Image, "LANCZOS", Image.Resampling.LANCZOS)
-    q_method = getattr(Image.Quantize, "FASTOCTREE", Image.Quantize.MEDIANCUT)
-    q_colors = max(32, min(255, int(os.environ.get("RVM_PRO_GIF_COLORS", "128"))))
+    q_colors = max(32, min(255, int(os.environ.get("RVM_PRO_GIF_COLORS", "160"))))
+    q_method_name = (os.environ.get("RVM_PRO_GIF_QUANTIZE") or "fast").strip().lower()
+    if q_method_name in {"median", "mediancut", "hq"}:
+        q_method = getattr(Image.Quantize, "MEDIANCUT", Image.Quantize.FASTOCTREE)
+    else:
+        q_method = getattr(Image.Quantize, "FASTOCTREE", Image.Quantize.MEDIANCUT)
     use_dither = (os.environ.get("RVM_PRO_GIF_DITHER", "0").strip().lower() not in {"0", "false", "no"})
     dither = Image.Dither.FLOYDSTEINBERG if use_dither else Image.Dither.NONE
+    white_bg = os.environ.get("RVM_PRO_GIF_WHITE_BG", "0").strip().lower() not in {"0", "false", "no"}
     total = len(rgba_frames)
     for fi, rgba in enumerate(rgba_frames):
         if fi > 0 and fi % 80 == 0:
@@ -291,32 +373,44 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
         ow, oh = img.size
         nh = max(1, int(round(oh * width / max(1, ow))))
         img = img.resize((width, nh), resize_f)
-        r, g, b, a = img.split()
-        rgb_p = (
-            Image.merge("RGB", (r, g, b))
-            .quantize(colors=q_colors, method=q_method, dither=dither)
-            .convert("P")
-        )
-        arr = np.array(rgb_p)
-        arr[np.array(a) < 128] = 255
-        frame_p = Image.fromarray(arr, "P")
-        frame_p.putpalette(rgb_p.getpalette())
-        pil_frames.append(frame_p)
+        if white_bg:
+            base = Image.new("RGBA", img.size, (255, 255, 255, 255))
+            flat = Image.alpha_composite(base, img).convert("RGB")
+            rgb_p = flat.quantize(colors=q_colors, method=q_method, dither=dither)
+            pil_frames.append(rgb_p)
+        else:
+            r, g, b, a = img.split()
+            rgb_p = (
+                Image.merge("RGB", (r, g, b))
+                .quantize(colors=q_colors, method=q_method, dither=dither)
+                .convert("P")
+            )
+            arr = np.array(rgb_p)
+            arr[np.array(a) < 128] = 255
+            frame_p = Image.fromarray(arr, "P")
+            frame_p.putpalette(rgb_p.getpalette())
+            pil_frames.append(frame_p)
     if not pil_frames:
         return
     first = pil_frames[0]
-    first.info["transparency"] = 255
-    first.save(
-        str(path),
-        format="GIF",
-        save_all=True,
-        append_images=pil_frames[1:],
-        loop=0,
-        duration=duration_ms,
-        disposal=2,
-        transparency=255,
-        optimize=False,
-    )
+    save_kw: dict = {
+        "format": "GIF",
+        "save_all": True,
+        "append_images": pil_frames[1:],
+        "loop": 0,
+        "duration": duration_ms,
+        "optimize": False,
+    }
+    if white_bg:
+        first.save(str(path), **save_kw)
+    else:
+        first.info["transparency"] = 255
+        first.save(
+            str(path),
+            disposal=2,
+            transparency=255,
+            **save_kw,
+        )
     sz = path.stat().st_size / 1e6
     print(f"[GIF] Saved {path} ({sz:.1f}MB)", flush=True)
 
@@ -338,17 +432,68 @@ def main() -> None:
 
     print("[BiRefNet] loading ZhengPeng7/BiRefNet …", flush=True)
     try:
-        birefnet = AutoModelForImageSegmentation.from_pretrained(
-            "ZhengPeng7/BiRefNet",
-            trust_remote_code=True,
-        ).to(device)
+        # Keep checkpoint load on CPU; HF / remote code can otherwise touch CUDA during load
+        # (progress hits 100% then fails) before our .to(device) fallback runs.
+        try:
+            birefnet = AutoModelForImageSegmentation.from_pretrained(
+                "ZhengPeng7/BiRefNet",
+                trust_remote_code=True,
+                device_map="cpu",
+            )
+        except Exception as load_exc:
+            if "device_map" not in str(load_exc).lower():
+                raise
+            print(
+                "[WARN] BiRefNet device_map=cpu unavailable; retrying default load …",
+                flush=True,
+            )
+            birefnet = AutoModelForImageSegmentation.from_pretrained(
+                "ZhengPeng7/BiRefNet",
+                trust_remote_code=True,
+            )
         # MPS/CUDA half weights vs float32 inputs → keep matting in float32 for stability
         birefnet = birefnet.float()
         birefnet.eval()
+        try:
+            birefnet = birefnet.to(device)
+        except Exception as move_exc:
+            if device.type != "cuda":
+                raise SystemExit(f"BiRefNet load failed: {move_exc}") from move_exc
+            print(
+                f"[WARN] BiRefNet could not use CUDA ({move_exc}); using CPU",
+                flush=True,
+            )
+            device = torch.device("cpu")
+            birefnet = birefnet.to(device)
+    except SystemExit:
+        raise
     except Exception as exc:
         raise SystemExit(f"BiRefNet load failed: {exc}") from exc
 
-    transform_img = build_transform_img()
+    biref_stride = _biref_stride(bool(args.no_yolo))
+    infer_w = _infer_resize_w(bool(args.no_yolo))
+    biref_side = _birefnet_input_side(bool(args.no_yolo))
+    print(
+        f"[SLA] BiRefNet stride={biref_stride} infer_w={infer_w} square={biref_side} no_yolo={args.no_yolo}",
+        flush=True,
+    )
+    transform_img = build_transform_img(biref_side)
+
+    _gif_white = os.environ.get("RVM_PRO_GIF_WHITE_BG", "0").strip().lower() not in {"0", "false", "no"}
+    _whiten_edges = os.environ.get("RVM_PRO_GIF_WHITEN_FOR_WHITE", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
+    _matte_shrink_px = max(
+        0,
+        int(
+            os.environ.get(
+                "RVM_PRO_MATTE_SHRINK_PX",
+                "1" if (_gif_white or _whiten_edges) else "0",
+            )
+        ),
+    )
 
     pose_model: YOLO | None = None
     seg_model: YOLO | None = None
@@ -370,7 +515,7 @@ def main() -> None:
     print(f"[INFO] {ow}x{oh} @ {fps:.2f}fps, frames={n}", flush=True)
 
     fg_writer = _writer(Path(args.fg).resolve(), fps, ow, oh, gray=False) if args.fg else None
-    a_writer = _writer(Path(args.alpha).resolve(), fps, ow, oh, gray=True) if args.alpha else None
+    a_writer = _writer(Path(args.alpha).resolve(), fps, ow, oh, gray=False) if args.alpha else None
 
     obj_mem = ObjectMemory(ttl=6)
     ema = EMA(a=0.65)
@@ -389,10 +534,10 @@ def main() -> None:
             if idx % 10 == 0:
                 print(f"[INFO] frame {idx}/{n}", flush=True)
 
-            inf = resize_infer_bgr(frame, INFER_WIDTH)
+            inf = resize_infer_bgr(frame, infer_w)
             ih, iw = inf.shape[:2]
 
-            if last_biref_alpha is None or idx % 2 == 1:
+            if last_biref_alpha is None or idx % biref_stride == 1:
                 last_biref_alpha = get_alpha(inf, birefnet, device, transform_img)
             biref_inf = last_biref_alpha
 
@@ -408,7 +553,11 @@ def main() -> None:
                 held_fused = None
 
             clean_inf = combine(biref_inf, held_fused)
-            alpha_full = cv2.resize(clean_inf, (ow, oh), interpolation=cv2.INTER_LINEAR)
+            alpha_full = cv2.resize(
+                clean_inf,
+                (ow, oh),
+                interpolation=getattr(cv2, "INTER_LANCZOS4", cv2.INTER_LINEAR),
+            )
 
             alpha_f = alpha_full.astype(np.float32)
             if int(args.dilation) > 0:
@@ -420,16 +569,24 @@ def main() -> None:
 
             alpha_u8 = np.clip(alpha_f, 0, 255).astype(np.uint8)
             alpha_u8 = ema(alpha_u8)
+            if _matte_shrink_px > 0:
+                ks = max(3, _matte_shrink_px * 2 + 1)
+                k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ks, ks))
+                alpha_u8 = cv2.erode(alpha_u8, k, iterations=1)
+            alpha_u8 = _alpha_fringe_gamma(alpha_u8)
             rgba = _rgba_from_bgr_and_alpha(frame, alpha_u8)
+            if _whiten_edges and not _gif_white:
+                rgba = _rgba_whiten_fringe_for_white_backdrop(rgba)
             gif_rgba.append(rgba)
 
             if fg_writer is not None:
-                fg = frame.astype(np.float32)
-                m3 = (alpha_u8.astype(np.float32) / 255.0)[..., None]
-                fg = np.clip(fg * m3, 0, 255).astype(np.uint8)
+                wrgb = rgba[:, :, :3].astype(np.float32)
+                a = rgba[:, :, 3:4].astype(np.float32) / 255.0
+                premul = np.clip(wrgb * a, 0, 255).astype(np.uint8)
+                fg = cv2.cvtColor(premul, cv2.COLOR_RGB2BGR)
                 fg_writer.write(fg)
-        if a_writer is not None:
-            a_writer.write(alpha_u8)
+            if a_writer is not None:
+                a_writer.write(cv2.cvtColor(alpha_u8, cv2.COLOR_GRAY2BGR))
     finally:
         cap.release()
         if fg_writer is not None:
@@ -437,7 +594,8 @@ def main() -> None:
         if a_writer is not None:
             a_writer.release()
 
-    max_gif = max(24, int(os.environ.get("RVM_PRO_GIF_MAX_FRAMES", "480")))
+    _gif_max_default = "280" if args.no_yolo else "480"
+    max_gif = max(24, int(os.environ.get("RVM_PRO_GIF_MAX_FRAMES", _gif_max_default)))
     gif_src = _decimate_frames_for_gif(
         gif_rgba, video_fps=float(fps), gif_fps=int(args.gif_fps), max_frames=max_gif
     )

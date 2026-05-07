@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block main_py %}pt-0 pb-5 sm:pb-6{% endblock %}
+{% block title %}Sign in — FormLoop{% endblock %}
+{% block content %}
+<div class="auth-dmotion relative -mx-3 sm:-mx-5 -mt-2 sm:-mt-1 flex flex-col items-center justify-start min-h-[calc(100dvh-3.25rem)] sm:min-h-[calc(100dvh-3.5rem)] pt-0 pb-4 px-3 sm:px-6 overflow-x-hidden">
+  <div class="pointer-events-none absolute inset-0 -z-10">
+    <div class="auth-blob-a absolute top-[-20%] left-1/2 h-[70%] w-[90%] -translate-x-1/2 rounded-full bg-indigo-600/[0.08] blur-[120px]"></div>
+    <div class="auth-blob-b absolute bottom-[-15%] right-[-5%] h-[55%] w-[55%] rounded-full bg-cyan-500/[0.07] blur-[100px]"></div>
+  </div>
+
+  <article class="auth-premium-card relative w-full max-w-[920px] flex flex-col lg:flex-row overflow-hidden rounded-3xl border border-white/[0.1] bg-zinc-950/[0.88] backdrop-blur-xl backdrop-saturate-150 ring-1 ring-white/[0.04]">
+    <!-- Brand column: matches logo black; wide wordmark -->
+    <div class="relative flex flex-col items-center justify-center gap-4 sm:gap-5 overflow-hidden bg-black px-6 py-8 sm:px-8 sm:py-10 lg:py-12 lg:w-[min(380px,42%)] lg:shrink-0 border-b lg:border-b-0 lg:border-r border-white/[0.06]">
+      <span class="auth-brand-topline pointer-events-none absolute inset-x-8 top-0 z-10 h-px bg-gradient-to-r from-transparent via-indigo-400/70 to-transparent sm:inset-x-10" aria-hidden="true"></span>
+      <div class="auth-brand-aurora pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_-20%,rgba(99,102,241,0.14),transparent)]"></div>
+      <img
+        src="/static/formloop-logo-transparent.png"
+        alt="FormLoop"
+        width="512"
+        height="288"
+        class="auth-brand-logo relative z-[1] w-full max-w-[min(300px,88vw)] sm:max-w-[280px] h-auto object-contain drop-shadow-[0_8px_40px_rgba(0,0,0,0.45)]"
+        loading="eager"
+        decoding="async"
+      />
+      <p class="auth-reveal-1 relative z-[1] text-center text-[13px] text-zinc-500 leading-relaxed max-w-[260px] hidden sm:block">
+        Video matting and transparent GIFs—built for a quick, reliable workflow.
+      </p>
+    </div>
+
+    <!-- Form column -->
+    <div class="relative flex-1 flex flex-col justify-center px-6 py-7 sm:px-10 sm:py-9 lg:px-12 lg:py-11">
+      <div class="pointer-events-none absolute top-0 right-0 h-56 w-56 rounded-full bg-indigo-500/[0.06] blur-3xl"></div>
+
+      <header class="auth-reveal-1 relative mb-7">
+        <h1 class="text-2xl sm:text-[1.65rem] font-bold text-white tracking-tight">Welcome back</h1>
+        <p class="mt-1.5 text-sm text-zinc-500">Sign in with your email to pick up where you left off.</p>
+      </header>
+
+      <div id="auth-error" class="auth-reveal-2 relative mb-6 hidden rounded-xl border border-rose-500/35 bg-rose-950/50 px-4 py-3 text-xs text-rose-100/95 leading-relaxed" role="alert"></div>
+
+      <form id="auth-form" class="auth-reveal-2 relative space-y-5" aria-busy="false">
+        {% if next %}
+        <input type="hidden" name="next" id="next-field" value="{{ next }}" />
+        {% endif %}
+        <div>
+          <label for="email" class="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-zinc-500">Email</label>
+          <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com" class="w-full rounded-xl border border-white/[0.1] bg-zinc-900/90 px-4 py-3 text-sm text-white placeholder:text-zinc-600 outline-none transition duration-300 focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/25 focus:shadow-[0_0_36px_-10px_rgba(99,102,241,0.35)]" />
+        </div>
+        <div>
+          <div class="mb-1.5 flex items-center justify-between gap-2">
+            <label for="password" class="text-xs font-semibold uppercase tracking-wide text-zinc-500">Password</label>
+            <button type="button" id="forgot-pw" class="text-xs font-medium text-cyan-400/90 hover:text-cyan-300 transition">Forgot?</button>
+          </div>
+          <div class="relative">
+            <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="••••••••" class="w-full rounded-xl border border-white/[0.1] bg-zinc-900/90 pl-4 pr-12 py-3 text-sm text-white placeholder:text-zinc-600 outline-none transition duration-300 focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/25 focus:shadow-[0_0_36px_-10px_rgba(99,102,241,0.35)]" />
+            <button type="button" id="toggle-pw" class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-2 text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200 transition" aria-label="Show password">
+              <svg id="eye-open" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+              <svg id="eye-off" class="h-5 w-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>
+            </button>
+          </div>
+        </div>
+        <button type="submit" id="auth-submit" class="auth-cta group relative w-full overflow-hidden rounded-xl bg-gradient-to-r from-indigo-600 via-violet-600 to-indigo-600 text-sm font-bold text-white shadow-[0_12px_40px_-12px_rgba(99,102,241,0.55)] ring-1 ring-white/15 transition duration-300 hover:brightness-110 hover:shadow-[0_20px_56px_-12px_rgba(99,102,241,0.5)] active:scale-[0.99] disabled:pointer-events-none disabled:cursor-wait disabled:opacity-90">
+          <span class="auth-cta-shimmer" aria-hidden="true"></span>
+          <span class="relative z-10 inline-flex w-full items-center justify-center gap-2.5 py-3.5">
+            <svg id="auth-submit-spinner" class="h-5 w-5 shrink-0 animate-spin text-white/90 hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+              <circle class="opacity-30" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span id="auth-submit-label">Sign in</span>
+          </span>
+        </button>
+      </form>
+
+      <p class="auth-reveal-2 relative mt-8 text-center text-sm text-zinc-500">
+        New here?
+        <a href="/auth/signup{% if next %}?next={{ next | urlencode }}{% endif %}" class="font-semibold text-violet-400 transition duration-300 hover:text-violet-300 hover:underline underline-offset-2">Create an account</a>
+      </p>
+      <p class="auth-reveal-2 relative mt-2 text-center text-[11px] text-zinc-600">Session stays signed in on this device.</p>
+      <p class="auth-reveal-2 relative mt-5 text-center">
+        <a href="/dashboard" class="text-xs font-medium text-zinc-500 transition duration-300 hover:text-zinc-300">← Back to dashboard</a>
+      </p>
+    </div>
+  </article>
+</div>
+
+<script type="module">
+  const firebaseConfig = {{ firebase_config | tojson }};
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+  import { getFirestore, doc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  try {
+    const { getAnalytics, isSupported } = await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-analytics.js");
+    if (await isSupported()) getAnalytics(app);
+  } catch (_) {}
+
+  const pw = document.getElementById("password");
+  document.getElementById("toggle-pw").addEventListener("click", () => {
+    const show = pw.type === "password";
+    pw.type = show ? "text" : "password";
+    document.getElementById("eye-open").classList.toggle("hidden", !show);
+    document.getElementById("eye-off").classList.toggle("hidden", show);
+  });
+
+  document.getElementById("forgot-pw").addEventListener("click", async () => {
+    const email = document.getElementById("email").value.trim();
+    if (!email) {
+      alert("Enter your email first, then tap Forgot again.");
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      alert("Check your inbox for a reset link.");
+    } catch (e) {
+      alert(e?.message || "Could not send reset email.");
+    }
+  });
+
+  const form = document.getElementById("auth-form");
+  const errEl = document.getElementById("auth-error");
+  const btn = document.getElementById("auth-submit");
+  const btnLabel = document.getElementById("auth-submit-label");
+  const btnSpinner = document.getElementById("auth-submit-spinner");
+  const nextField = document.getElementById("next-field");
+
+  function setLoading(loading) {
+    form.setAttribute("aria-busy", loading ? "true" : "false");
+    btn.disabled = loading;
+    btnSpinner.classList.toggle("hidden", !loading);
+    btnLabel.textContent = loading ? "Signing in…" : "Sign in";
+  }
+
+  function showError(msg) {
+    errEl.textContent = msg;
+    errEl.classList.remove("hidden");
+  }
+  function clearError() {
+    errEl.classList.add("hidden");
+    errEl.textContent = "";
+  }
+  function friendlyAuth(e) {
+    const c = e?.code || "";
+    if (c === "auth/invalid-credential" || c === "auth/wrong-password" || c === "auth/user-not-found")
+      return "Email or password is incorrect.";
+    if (c === "auth/invalid-email") return "Enter a valid email address.";
+    if (c === "auth/too-many-requests") return "Too many attempts. Try again in a few minutes.";
+    if (c === "auth/user-disabled") return "This account has been disabled.";
+    return e?.message || "Something went wrong. Try again.";
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearError();
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    setLoading(true);
+    try {
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      try {
+        await setDoc(
+          doc(db, "users", cred.user.uid),
+          { email: cred.user.email || email, updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+      } catch (fsErr) {
+        console.warn("Firestore merge on login:", fsErr);
+      }
+      const idToken = await cred.user.getIdToken();
+      const next = nextField ? nextField.value : "";
+      const r = await fetch("/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ id_token: idToken, next }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Could not start session.");
+      window.location.href = data.redirect || "/dashboard";
+    } catch (ex) {
+      showError(friendlyAuth(ex));
+    } finally {
+      setLoading(false);
+    }
+  });
+</script>
+{% endblock %}

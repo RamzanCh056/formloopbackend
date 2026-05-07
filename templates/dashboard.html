@@ -1,0 +1,1223 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — FormLoop{% endblock %}
+{% block content %}
+<style>
+  @keyframes dashFloat {
+    0%, 100% { transform: translateY(0px); opacity: .85; }
+    50% { transform: translateY(-8px); opacity: 1; }
+  }
+  @keyframes dashShine {
+    0% { transform: translateX(-140%) skewX(-12deg); opacity: 0; }
+    18% { opacity: .28; }
+    55% { opacity: .18; }
+    100% { transform: translateX(140%) skewX(-12deg); opacity: 0; }
+  }
+  .dash-float { animation: dashFloat 14s ease-in-out infinite; }
+  .dash-glass {
+    backdrop-filter: blur(14px) saturate(145%);
+    background: linear-gradient(160deg, rgba(16,16,24,.82), rgba(8,8,14,.78));
+    box-shadow: 0 18px 50px -28px rgba(99,102,241,.3), inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  .dash-sheen { position: relative; overflow: hidden; }
+  .dash-sheen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 55%;
+    background: linear-gradient(110deg, transparent, rgba(255,255,255,.2), transparent);
+    animation: dashShine 6.8s ease-in-out infinite;
+    pointer-events: none;
+  }
+</style>
+<div class="relative max-w-6xl mx-auto">
+  <div class="pointer-events-none absolute -top-20 -right-20 h-80 w-80 rounded-full bg-violet-600/[0.14] blur-[110px]"></div>
+  <div class="pointer-events-none absolute top-48 -left-24 h-72 w-72 rounded-full bg-indigo-500/[0.12] blur-[95px] dash-float"></div>
+  <div class="pointer-events-none absolute top-1/2 left-1/2 h-96 w-[min(100%,42rem)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-500/[0.05] blur-[100px] dash-float"></div>
+
+{% if guest_mode %}
+<div class="mb-6 sm:mb-8 relative overflow-hidden rounded-2xl p-px bg-gradient-to-br from-indigo-500/30 via-white/[0.08] to-violet-500/20 shadow-card">
+  <div class="relative rounded-[15px] bg-gradient-to-br from-[#0c0c12] to-[#08080c] border border-white/[0.05] px-4 py-4 sm:px-6 sm:py-5">
+    <div class="pointer-events-none absolute -right-20 -top-20 h-40 w-40 rounded-full bg-indigo-500/20 blur-3xl"></div>
+    <div class="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div class="flex gap-3">
+        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/20 ring-1 ring-indigo-400/25 text-indigo-200">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+        </span>
+        <div>
+          <p class="text-sm font-semibold text-white">Save every clip to your library</p>
+          <p class="mt-0.5 text-xs text-zinc-500 max-w-md leading-relaxed">Sign in — your transparent GIFs show up here.</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2 shrink-0">
+        <a href="/auth/login" class="inline-flex items-center justify-center rounded-xl bg-white text-void px-4 py-2.5 text-xs font-bold hover:bg-zinc-100 transition shadow-lg shadow-black/20">Sign in</a>
+        <a href="/auth/signup" class="inline-flex items-center justify-center rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-xs font-semibold text-zinc-100 hover:bg-white/[0.08] transition">Create account</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="mb-4 sm:mb-5 relative dash-glass rounded-2xl border border-white/[0.07] px-4 py-4 sm:px-5 sm:py-4 shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]">
+  <div class="pointer-events-none absolute -top-16 right-8 h-28 w-28 rounded-full bg-indigo-500/20 blur-3xl"></div>
+  <div class="pointer-events-none absolute bottom-0 left-24 h-24 w-24 rounded-full bg-cyan-500/10 blur-2xl"></div>
+  <header class="relative flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 lg:gap-5">
+    <div class="flex gap-3.5 sm:gap-4 min-w-0">
+      <div class="fl-logo-tile hidden sm:flex shrink-0 self-start rounded-xl p-2 ring-1 ring-white/[0.08] sm:self-center sm:p-2.5">
+        <img src="/static/formloop-logo-transparent.png" alt="" width="128" height="128" decoding="async" class="fl-brand-logo-img-mark h-9 w-9 sm:h-10 sm:w-10 object-contain opacity-[0.98]" />
+      </div>
+      <div class="min-w-0 flex-1">
+      <p class="text-[10px] font-bold uppercase tracking-[0.22em] text-indigo-400/95 mb-1.5 inline-flex items-center gap-2">
+        <span class="h-px w-8 bg-gradient-to-r from-transparent to-indigo-400/40 hidden sm:block"></span>
+        Library
+        <span class="h-px w-8 bg-gradient-to-l from-transparent to-indigo-400/40 hidden sm:block"></span>
+      </p>
+      <h1 class="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight drop-shadow-[0_8px_28px_rgba(99,102,241,0.22)]">
+        <span class="bg-gradient-to-br from-white via-zinc-100 to-zinc-500 bg-clip-text text-transparent">Your GIFs</span>
+      </h1>
+      <p class="mt-1.5 text-xs sm:text-sm text-zinc-500 max-w-lg leading-relaxed">Studio-grade mattes — transparent GIFs and WebM, newest first.</p>
+      {% if not guest_mode %}
+      {% if show_watermark_note %}
+      <p class="mt-2.5 text-xs text-zinc-500 max-w-lg leading-relaxed">Free exports carry a subtle <span class="text-zinc-400">FormLoop</span> mark. <a href="/subscription" class="font-semibold text-indigo-400 transition hover:text-indigo-300">Remove it with a plan</a>.</p>
+      {% endif %}
+      {% if gif_limit is not none and gif_count >= gif_limit %}
+      <p class="mt-2.5 text-xs text-amber-200/90 max-w-lg">Plan cap reached ({{ gif_limit }} GIFs). <a href="/subscription" class="font-semibold text-white underline decoration-white/30 underline-offset-2 hover:decoration-white">Upgrade</a> for more.</p>
+      {% elif gif_limit is not none %}
+      <p class="mt-2.5 text-xs text-zinc-600 max-w-lg"><span class="tabular-nums font-medium text-zinc-400">{{ used_count if used_count is defined else gif_count }}</span><span class="text-zinc-700"> / </span><span class="tabular-nums text-zinc-500">{{ gif_limit }}</span><span class="text-zinc-600"> GIFs this plan</span></p>
+      {% endif %}
+      {% endif %}
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-2 sm:gap-2.5 shrink-0">
+      <button id="dash-create-top-btn" type="button" class="group dash-sheen inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/30 ring-1 ring-white/10 hover:from-indigo-500 hover:to-violet-500 hover:shadow-indigo-500/40 hover:-translate-y-0.5 active:translate-y-0 transition-all">
+        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Create a GIF
+      </button>
+      <a href="/dashboard/gifs" class="inline-flex items-center gap-2 rounded-xl border border-white/[0.1] bg-white/[0.04] hover:bg-white/[0.07] hover:border-indigo-500/20 px-4 py-2.5 text-xs font-semibold text-zinc-200 transition shadow-card">
+        <svg class="h-4 w-4 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+        Full library
+      </a>
+      {% if gif_limit is not none %}
+      <div class="inline-flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-black/25 px-3 py-2 text-[11px] font-semibold text-zinc-300">
+        <span class="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>
+        <span>{{ (used_count if used_count is defined else gif_count) }}/{{ gif_limit }} slots used</span>
+      </div>
+      {% endif %}
+    </div>
+  </header>
+</div>
+
+{% if not guest_mode %}
+{% set _who = (account_name|default('', true) or account_email|default('', true) or 'You') %}
+<div class="mb-5 sm:mb-6">
+  <div class="relative overflow-hidden rounded-xl sm:rounded-2xl border border-white/[0.07] bg-gradient-to-br from-zinc-950/90 to-[#08080c]/95 backdrop-blur-md shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset,0_16px_40px_-24px_rgba(99,102,241,0.1)]">
+    <div class="pointer-events-none absolute -right-8 top-0 h-20 w-20 rounded-full bg-violet-500/15 blur-2xl"></div>
+    <div class="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-5 sm:px-5 sm:py-3.5">
+      <a href="/profile" class="group flex min-w-0 items-center gap-3.5 rounded-xl outline-none ring-indigo-500/0 transition hover:bg-white/[0.03] focus-visible:ring-2 focus-visible:ring-indigo-500/40 sm:-m-1 sm:p-1">
+        <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold tracking-tight text-white shadow-md shadow-indigo-950/50 ring-2 ring-black/40" aria-hidden="true">{{ (_who[:1])|upper }}</span>
+        <div class="min-w-0 text-left">
+          <p class="truncate text-[15px] font-semibold text-white group-hover:text-indigo-200 transition-colors">{% if account_name|default('', true) %}{{ account_name }}{% else %}{{ account_email or 'Your account' }}{% endif %}</p>
+          {% if account_name|default('', true) and account_email|default('', true) %}<p class="truncate text-xs text-zinc-500">{{ account_email }}</p>{% endif %}
+          <p class="mt-0.5 text-[13px] leading-snug text-zinc-500">
+            <span class="tabular-nums text-zinc-300">{{ gif_count }}</span> GIF{% if gif_count != 1 %}s{% endif %} saved
+            {% if gif_limit is not none %}<span class="text-zinc-700"> · </span><span class="tabular-nums text-zinc-500">{{ (used_count if used_count is defined else gif_count) }}/{{ gif_limit }}</span>{% endif %}
+            <span class="text-zinc-700"> · </span>
+            {% if user.is_premium %}
+            <span class="font-medium text-emerald-400/90">{{ user.plan_label }}</span>
+            {% else %}
+            <span>{{ user.plan_label }} plan</span>
+            {% endif %}
+          </p>
+        </div>
+      </a>
+      <div class="flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-3 sm:border-t-0 sm:border-l sm:border-white/[0.06] sm:pt-0 sm:pl-5">
+        {% if not user.is_premium %}
+        <a href="/subscription" class="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-semibold text-white shadow-md shadow-indigo-500/20 ring-1 ring-white/10 transition hover:from-indigo-500 hover:to-violet-500">Upgrade plan</a>
+        {% endif %}
+        <a href="/profile" class="inline-flex items-center justify-center rounded-xl border border-white/[0.1] bg-white/[0.03] px-4 py-2.5 text-xs font-medium text-zinc-300 transition hover:border-white/[0.14] hover:bg-white/[0.06] hover:text-white">Profile</a>
+        <a href="/dashboard/gifs" class="inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-xs font-medium text-zinc-500 transition hover:text-zinc-200">All GIFs</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if not guest_mode %}
+{% set at_quota = (gif_limit is not none and gif_count >= gif_limit) %}
+<input id="dash-video-input" type="file" accept="video/*" class="hidden" />
+<p id="dash-create-status" class="mb-6 sm:mb-8 text-xs text-zinc-500"></p>
+
+<div id="dash-flow-modal" class="hidden mb-6 sm:mb-8">
+  <div class="w-full rounded-2xl border border-white/10 dash-glass shadow-2xl">
+      <div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
+        <p id="dash-flow-title" class="text-lg font-bold text-white">Source</p>
+        <button id="dash-flow-close" type="button" class="rounded-lg border border-white/10 px-2 py-1 text-xs text-zinc-400 hover:text-white">Hide</button>
+      </div>
+      <div class="px-3 pt-3 sm:px-4">
+        <div class="mb-4 grid grid-cols-4 gap-2">
+          <div id="dash-step-1" class="h-1.5 rounded-full bg-cyan-400"></div>
+          <div id="dash-step-2" class="h-1.5 rounded-full bg-white/10"></div>
+          <div id="dash-step-3" class="h-1.5 rounded-full bg-white/10"></div>
+          <div id="dash-step-4" class="h-1.5 rounded-full bg-white/10"></div>
+        </div>
+      </div>
+      <div class="px-3 pb-3 sm:px-4 sm:pb-4">
+        <section id="dash-pane-source">
+          <p class="text-sm font-semibold text-white">Selected clip</p>
+          <div class="mt-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+            <p id="dash-file-name" class="text-sm text-zinc-200 truncate"></p>
+            <p id="dash-file-meta" class="mt-1 text-xs text-zinc-500"></p>
+          </div>
+          <video id="dash-preview-video" class="mt-3 w-full max-h-[52vh] rounded-xl border border-white/10 bg-black object-contain" playsinline muted controls></video>
+          <p class="mt-2 text-[11px] text-zinc-500">Preview only. Next step lets you set trim in/out.</p>
+        </section>
+
+        <section id="dash-pane-trim" class="hidden">
+          <p class="text-sm font-semibold text-white">Trim</p>
+          <p class="mt-1 text-xs text-zinc-500">Drag handles to choose in/out range for preview.</p>
+          <video id="dash-trim-video" class="mt-3 w-full max-h-[52vh] rounded-xl border border-white/10 bg-black object-contain" playsinline muted controls></video>
+          <div class="mt-3">
+            <label class="text-[11px] text-zinc-500">Start</label>
+            <input id="dash-trim-start" type="range" min="0" max="0" step="0.1" value="0" class="mt-1 w-full" />
+          </div>
+          <div class="mt-2">
+            <label class="text-[11px] text-zinc-500">End</label>
+            <input id="dash-trim-end" type="range" min="0" max="0" step="0.1" value="0" class="mt-1 w-full" />
+          </div>
+          <p id="dash-trim-label" class="mt-2 text-xs text-cyan-300"></p>
+        </section>
+
+        <section id="dash-pane-cutout" class="hidden">
+          <p class="text-sm font-semibold text-white">Cutout</p>
+          <p class="mt-1 text-xs text-zinc-500">Run remove-background with live stage tracking, then review outputs and save.</p>
+          <div class="mt-3 rounded-xl border border-white/10 bg-white/[0.02] px-2.5 py-2 sm:px-3 sm:py-2.5">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-[11px] font-semibold tracking-wide text-zinc-300">Pipeline stages</p>
+              <p id="dash-phase-label" class="text-[11px] text-cyan-300">Waiting for upload</p>
+            </div>
+            <div class="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-5">
+              <div id="dash-phase-upload" class="rounded-lg border border-white/10 bg-white/[0.02] px-2 py-1.5 text-[10px] font-semibold text-zinc-500">Upload</div>
+              <div id="dash-phase-matting" class="rounded-lg border border-white/10 bg-white/[0.02] px-2 py-1.5 text-[10px] font-semibold text-zinc-500">Matting</div>
+              <div id="dash-phase-compositing" class="rounded-lg border border-white/10 bg-white/[0.02] px-2 py-1.5 text-[10px] font-semibold text-zinc-500">Compositing</div>
+              <div id="dash-phase-encoding" class="rounded-lg border border-white/10 bg-white/[0.02] px-2 py-1.5 text-[10px] font-semibold text-zinc-500">Encoding</div>
+              <div id="dash-phase-finalizing" class="rounded-lg border border-white/10 bg-white/[0.02] px-2 py-1.5 text-[10px] font-semibold text-zinc-500">Finalizing</div>
+            </div>
+          </div>
+          <div id="dash-result-wrap" class="mt-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div class="rounded-lg border border-white/10 bg-black/70 p-2">
+                <p id="dash-gif-status" class="mb-2 text-[11px] font-semibold text-zinc-300">Transparent GIF</p>
+                <video id="dash-gif-processing-video" class="hidden w-full max-h-[52vh] rounded-lg bg-black object-contain" playsinline muted autoplay loop></video>
+                <img id="dash-gif-preview" class="w-full max-h-[52vh] rounded-lg object-contain bg-white ring-1 ring-zinc-700/30" alt="Transparent GIF preview on white (matches how it looks on light UIs)" title="GIF file is still transparent; we preview on white so edges look like they will in your app." />
+                <div class="mt-2 flex items-center gap-2">
+                  <button id="dash-copy-gif" type="button" class="rounded-lg border border-white/10 px-2.5 py-1 text-[11px] font-semibold text-zinc-200 hover:bg-white/[0.05]">Copy GIF URL</button>
+                  <span id="dash-gif-url" class="truncate text-[10px] text-zinc-500"></span>
+                </div>
+              </div>
+              <div class="rounded-lg border border-white/10 bg-black/70 p-2">
+                <p id="dash-webm-status" class="mb-2 text-[11px] font-semibold text-zinc-300">Transparent WebM</p>
+                <video id="dash-webm-video" class="w-full max-h-[52vh] rounded-lg bg-black object-contain" playsinline muted controls loop></video>
+                <div class="mt-2 flex items-center gap-2">
+                  <button id="dash-copy-webm" type="button" class="rounded-lg border border-white/10 px-2.5 py-1 text-[11px] font-semibold text-zinc-200 hover:bg-white/[0.05]">Copy WebM URL</button>
+                  <span id="dash-webm-url" class="truncate text-[10px] text-zinc-500"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="dash-metadata-wrap" class="mt-3 hidden grid gap-2 sm:grid-cols-2">
+            <input id="dash-export-title" type="text" maxlength="80" placeholder="Export title" class="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-indigo-400/50" />
+            <input id="dash-export-tags" type="text" maxlength="160" placeholder="Tags (comma separated)" class="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-indigo-400/50" />
+          </div>
+          <div class="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+            <p class="text-[11px] text-zinc-400">Render mode</p>
+            <div class="inline-flex rounded-lg border border-white/10 bg-black/40 p-0.5">
+              <button id="dash-mode-fast" type="button" class="rounded-md px-2.5 py-1 text-[11px] font-semibold text-zinc-300 hover:bg-white/[0.05]">Fast preview</button>
+              <button id="dash-mode-hq" type="button" class="rounded-md px-2.5 py-1 text-[11px] font-semibold text-white bg-indigo-500/70">High quality</button>
+            </div>
+          </div>
+          <p id="dash-save-warning" class="mt-2 text-[11px] text-amber-300/90 hidden">Saved locally in testing mode.</p>
+          <p class="mt-2 text-[11px] text-zinc-500">Trim is currently a preview guide; processing runs on the uploaded source file.</p>
+          <div id="dash-progress-wrap" class="mt-3 hidden rounded-lg border border-white/10 bg-gradient-to-r from-indigo-500/[0.06] via-transparent to-cyan-500/[0.06] p-2.5">
+            <div class="mb-1.5 flex items-center justify-between text-[11px] text-zinc-400">
+              <span id="dash-progress-stage">Preparing render</span>
+              <span id="dash-progress-text" class="font-semibold text-zinc-300">0%</span>
+            </div>
+            <div class="h-2 overflow-hidden rounded-full bg-white/10">
+              <div id="dash-progress-bar" class="h-full w-0 rounded-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-300"></div>
+            </div>
+            <p id="dash-progress-elapsed" class="mt-1 text-[10px] text-zinc-400">Elapsed: 0s</p>
+          </div>
+        </section>
+
+        <p id="dash-flow-status" class="mt-3 text-xs text-zinc-500"></p>
+        <div class="mt-4 flex items-center justify-between gap-2">
+          <button id="dash-flow-back" type="button" class="rounded-xl border border-white/10 px-4 py-2 text-xs font-semibold text-zinc-300 hover:bg-white/[0.04]">Back</button>
+          <div class="flex items-center gap-2">
+            <button id="dash-flow-cancel-process" type="button" class="hidden rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-500/20">Cancel</button>
+            <button id="dash-save-export" type="button" class="hidden rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20">Save export</button>
+            <button id="dash-flow-next" type="button" class="rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-2 text-xs font-bold text-white">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
+</div>
+<div id="dash-toast-stack" class="pointer-events-none fixed bottom-4 right-4 z-[70] flex w-[min(92vw,22rem)] flex-col gap-2"></div>
+{% endif %}
+
+{% if not recent_gifs %}
+<div class="relative mx-auto max-w-2xl">
+  <div class="absolute inset-0 rounded-3xl bg-gradient-to-br from-indigo-500/18 via-violet-600/10 to-cyan-500/12 blur-lg opacity-70"></div>
+  <div class="relative overflow-hidden rounded-3xl p-px bg-gradient-to-br from-indigo-400/30 via-white/10 to-violet-500/22 shadow-[0_24px_70px_-34px_rgba(99,102,241,0.5)]">
+    <div class="relative rounded-[23px] border border-white/[0.06] bg-[#07070a] px-6 py-12 sm:px-10 sm:py-12 text-center">
+      <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(99,102,241,0.15),transparent)]"></div>
+      <div class="pointer-events-none absolute -left-6 bottom-0 h-16 w-16 rounded-full bg-cyan-500/20 blur-2xl"></div>
+      <div class="pointer-events-none absolute -right-6 top-0 h-16 w-16 rounded-full bg-violet-500/20 blur-2xl"></div>
+      <div class="relative mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500/25 to-violet-600/14 ring-1 ring-indigo-500/30 shadow-xl shadow-indigo-500/15">
+        <svg class="h-9 w-9 text-indigo-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.25" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+      </div>
+      <h2 class="relative text-2xl sm:text-[2rem] font-bold text-white tracking-tight">Nothing here yet</h2>
+      <p class="relative mt-3 text-sm text-zinc-500 leading-relaxed max-w-md mx-auto">Upload your first clip and we will remove the background, generate transparent GIF + WebM, then save it to your premium library.</p>
+      <div class="relative mt-7 flex flex-col sm:flex-row items-center justify-center gap-2.5">
+        <button id="dash-empty-create-btn" type="button" class="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-500/25 hover:from-indigo-500 hover:to-violet-500 transition ring-1 ring-white/10">
+          Start with a video
+        </button>
+        {% if guest_mode %}
+        <a href="/auth/login" class="inline-flex w-full sm:w-auto items-center justify-center rounded-xl border border-white/15 px-5 py-2.5 text-xs font-semibold text-zinc-300 hover:bg-white/[0.05] transition">
+          Sign in to save
+        </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+  {% for it in recent_gifs %}
+  <article class="group relative rounded-xl p-px bg-gradient-to-b from-white/[0.1] to-white/[0.02] hover:from-indigo-500/28 hover:to-violet-500/12 transition-all duration-300 shadow-card hover:shadow-glow flex flex-col">
+    <div class="rounded-[11px] bg-elevated/95 border border-white/[0.04] overflow-hidden flex flex-col h-full">
+      <div class="relative aspect-[9/16] fl-alpha-checker overflow-hidden ring-1 ring-inset ring-white/[0.06]">
+        <a href="{{ it.gif_url }}" target="_blank" rel="noopener" class="absolute inset-0 z-10 block">
+          <img data-preview-gif="{{ it.job_id }}" src="{{ it.gif_url }}" alt="" class="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]" loading="lazy" />
+        </a>
+        {% if it.webm_url %}
+        <video data-preview-webm="{{ it.job_id }}" src="{{ it.webm_url }}" class="hidden absolute inset-0 h-full w-full object-contain bg-black" playsinline muted loop controls></video>
+        {% endif %}
+        <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+        {% if it.webm_url %}
+        <div class="absolute left-2 right-2 bottom-2 z-20 flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-black/55 p-1 backdrop-blur-sm">
+          <button type="button" data-switch-preview="{{ it.job_id }}" data-target="gif" class="preview-switch rounded-md px-2 py-1 text-[10px] font-semibold text-white bg-indigo-500/70">GIF</button>
+          <button type="button" data-switch-preview="{{ it.job_id }}" data-target="webm" class="preview-switch rounded-md px-2 py-1 text-[10px] font-semibold text-zinc-300 bg-white/10">WebM</button>
+        </div>
+        {% endif %}
+      </div>
+      <div class="p-2.5 flex-1 flex flex-col gap-2">
+        <div>
+          <p class="text-xs font-semibold text-zinc-100 truncate" title="{{ it.source_filename or 'Clip' }}">{{ it.source_filename or 'Clip' }}</p>
+          <p class="text-[9px] text-zinc-600 font-mono truncate mt-0.5 tracking-wide">{{ it.job_id[:10] }}…</p>
+        </div>
+        <div class="flex flex-wrap gap-1.5 mt-auto">
+          <a
+            href="{{ it.gif_url }}"
+            download
+            title="Download current preview"
+            data-smart-download="{{ it.job_id }}"
+            data-gif-url="{{ it.gif_url }}"
+            data-webm-url="{{ it.webm_url or '' }}"
+            class="inline-flex items-center gap-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.12] px-2 py-1.5 text-[10px] font-bold text-cyan-400 hover:text-cyan-300 transition ring-1 ring-white/[0.06]"
+          >
+            <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            <span data-smart-download-label="{{ it.job_id }}">Download GIF</span>
+          </a>
+          <button
+            type="button"
+            data-smart-copy="{{ it.job_id }}"
+            data-gif-url="{{ it.gif_url }}"
+            data-webm-url="{{ it.webm_url or '' }}"
+            data-current-type="gif"
+            title="Copy current preview URL"
+            class="copy-btn inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] px-2 py-1.5 text-[10px] font-semibold text-zinc-300 hover:text-white transition"
+          >
+            <svg class="h-3.5 w-3.5 shrink-0 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            <span class="copy-btn-label" data-smart-copy-label="{{ it.job_id }}">Copy GIF URL</span>
+          </button>
+          {% if it.webm_url %}
+          <a href="{{ it.webm_url }}" target="_blank" rel="noopener" title="Open WebM" class="inline-flex items-center gap-1 rounded-lg border border-cyan-500/25 bg-cyan-500/10 px-2 py-1.5 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-500/20 transition">
+            <span>Open WebM</span>
+          </a>
+          {% endif %}
+          {% if not guest_mode %}
+          <form method="post" action="/dashboard/gifs/{{ it.job_id }}/delete" class="inline" onsubmit="return confirm('Remove this GIF from your library?');">
+            <button type="submit" title="Delete from library" class="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-semibold text-rose-400/90 hover:bg-rose-500/10 hover:text-rose-300 transition ring-1 ring-rose-500/15">
+              <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              <span>Delete</span>
+            </button>
+          </form>
+          {% endif %}
+        </div>
+        <a href="/dashboard/gifs" class="inline-flex items-center gap-1 text-[10px] font-semibold text-zinc-600 hover:text-indigo-400 transition">
+          <span>All GIFs</span>
+          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        </a>
+      </div>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% if gif_count > recent_gifs|length %}
+<div class="mt-8 flex justify-center">
+  <a href="/dashboard/gifs" class="group inline-flex items-center gap-2 rounded-xl border border-indigo-500/25 bg-indigo-500/[0.08] hover:bg-indigo-500/[0.12] px-5 py-3 text-xs font-bold text-indigo-300 hover:text-white transition shadow-card hover:shadow-glow">
+    View all {{ gif_count }} GIFs
+    <svg class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+  </a>
+</div>
+{% endif %}
+{% endif %}
+</div>
+<script id="dash-flow-config" type="application/json">{{ {
+  "firebaseConfig": firebase_config,
+  "sessionUid": session_uid,
+  "sessionEmail": session_email,
+  "devTestAssetVideoUrl": dev_test_asset_video_url
+} | tojson }}</script>
+<script type="module">
+  const cfg = JSON.parse(document.getElementById('dash-flow-config')?.textContent || '{}');
+  const firebaseConfig = cfg.firebaseConfig || {};
+  const sessionUid = cfg.sessionUid || '';
+  const sessionEmail = cfg.sessionEmail || '';
+  const devTestAssetVideoUrl = cfg.devTestAssetVideoUrl || '';
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+  import { getAuth } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+  import { getFirestore, doc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+  const fbApp = initializeApp(firebaseConfig);
+  const fbAuth = getAuth(fbApp);
+  const fbDb = getFirestore(fbApp);
+
+  (function () {
+    const input = document.getElementById('dash-video-input');
+    const btn = document.getElementById('dash-create-btn');
+    const topBtn = document.getElementById('dash-create-top-btn');
+    const emptyCreateBtn = document.getElementById('dash-empty-create-btn');
+    const status = document.getElementById('dash-create-status');
+    const modal = document.getElementById('dash-flow-modal');
+    const closeBtn = document.getElementById('dash-flow-close');
+    const backBtn = document.getElementById('dash-flow-back');
+    const nextBtn = document.getElementById('dash-flow-next');
+    const cancelProcessBtn = document.getElementById('dash-flow-cancel-process');
+    const saveExportBtn = document.getElementById('dash-save-export');
+    const flowStatus = document.getElementById('dash-flow-status');
+    const title = document.getElementById('dash-flow-title');
+    const paneSource = document.getElementById('dash-pane-source');
+    const paneTrim = document.getElementById('dash-pane-trim');
+    const paneCutout = document.getElementById('dash-pane-cutout');
+    const step1 = document.getElementById('dash-step-1');
+    const step2 = document.getElementById('dash-step-2');
+    const step3 = document.getElementById('dash-step-3');
+    const step4 = document.getElementById('dash-step-4');
+    const nameEl = document.getElementById('dash-file-name');
+    const metaEl = document.getElementById('dash-file-meta');
+    const previewVideo = document.getElementById('dash-preview-video');
+    const trimVideo = document.getElementById('dash-trim-video');
+    const trimStart = document.getElementById('dash-trim-start');
+    const trimEnd = document.getElementById('dash-trim-end');
+    const trimLabel = document.getElementById('dash-trim-label');
+    const resultWrap = document.getElementById('dash-result-wrap');
+    const gifPreview = document.getElementById('dash-gif-preview');
+    const gifProcessingVideo = document.getElementById('dash-gif-processing-video');
+    const gifStatus = document.getElementById('dash-gif-status');
+    const gifUrlEl = document.getElementById('dash-gif-url');
+    const copyGifBtn = document.getElementById('dash-copy-gif');
+    const webmVideo = document.getElementById('dash-webm-video');
+    const webmStatus = document.getElementById('dash-webm-status');
+    const webmUrlEl = document.getElementById('dash-webm-url');
+    const copyWebmBtn = document.getElementById('dash-copy-webm');
+    const metadataWrap = document.getElementById('dash-metadata-wrap');
+    const progressWrap = document.getElementById('dash-progress-wrap');
+    const progressStage = document.getElementById('dash-progress-stage');
+    const progressBar = document.getElementById('dash-progress-bar');
+    const progressText = document.getElementById('dash-progress-text');
+    const progressElapsed = document.getElementById('dash-progress-elapsed');
+    const phaseLabel = document.getElementById('dash-phase-label');
+    const phaseUpload = document.getElementById('dash-phase-upload');
+    const phaseMatting = document.getElementById('dash-phase-matting');
+    const phaseCompositing = document.getElementById('dash-phase-compositing');
+    const phaseEncoding = document.getElementById('dash-phase-encoding');
+    const phaseFinalizing = document.getElementById('dash-phase-finalizing');
+    const toastStack = document.getElementById('dash-toast-stack');
+    const titleInput = document.getElementById('dash-export-title');
+    const tagsInput = document.getElementById('dash-export-tags');
+    const saveWarn = document.getElementById('dash-save-warning');
+    const modeFastBtn = document.getElementById('dash-mode-fast');
+    const modeHqBtn = document.getElementById('dash-mode-hq');
+    const sourceActions = paneSource ? paneSource.querySelector('.mt-2.rounded-xl') : null;
+    if (!input || (!btn && !topBtn && !emptyCreateBtn) || !status || !modal || !nextBtn || !backBtn || !flowStatus) return;
+
+    const setStatus = (msg, kind = 'muted') => {
+      status.textContent = msg || '';
+      status.className = 'mt-3 text-xs ' + (
+        kind === 'error' ? 'text-rose-300' :
+        kind === 'ok' ? 'text-emerald-300' :
+        'text-zinc-500'
+      );
+    };
+    const setFlowStatus = (msg, kind = 'muted') => {
+      flowStatus.textContent = msg || '';
+      flowStatus.className = 'mt-3 text-xs ' + (
+        kind === 'error' ? 'text-rose-300' :
+        kind === 'ok' ? 'text-emerald-300' :
+        'text-zinc-500'
+      );
+    };
+    const pushToast = (message, kind = 'info') => {
+      if (!toastStack || !message) return;
+      const tone = kind === 'ok'
+        ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-100'
+        : (kind === 'error'
+          ? 'border-rose-400/40 bg-rose-500/15 text-rose-100'
+          : 'border-cyan-400/40 bg-cyan-500/15 text-cyan-100');
+      const icon = kind === 'ok' ? '✓' : (kind === 'error' ? '!' : '•');
+      const item = document.createElement('div');
+      item.className = `pointer-events-auto rounded-xl border px-3 py-2 text-xs font-semibold shadow-lg backdrop-blur-sm ${tone}`;
+      item.style.transform = 'translateY(8px) scale(0.98)';
+      item.style.opacity = '0';
+      item.style.transition = 'transform 180ms ease, opacity 180ms ease';
+      item.innerHTML = `<span class="mr-2 inline-block min-w-3">${icon}</span>${message}`;
+      toastStack.appendChild(item);
+      requestAnimationFrame(() => {
+        item.style.transform = 'translateY(0) scale(1)';
+        item.style.opacity = '1';
+      });
+      setTimeout(() => {
+        item.style.transform = 'translateY(6px) scale(0.98)';
+        item.style.opacity = '0';
+        setTimeout(() => item.remove(), 200);
+      }, 2600);
+    };
+    const sec = (v) => `${Math.max(0, v).toFixed(1)}s`;
+    let selectedFile = null;
+    let step = 1;
+    let objectUrl = '';
+    let trimA = 0;
+    let trimB = 0;
+    let webmUrl = '';
+    let gifUrl = '';
+    let processedJobId = '';
+    let clipDuration = 0;
+    let localSavedItems = [];
+    let progressTicker = null;
+    let progressPoller = null;
+    let originalNextLabel = '';
+    let processingController = null;
+    let gifRetryCount = 0;
+    let renderMode = 'hq';
+    const phaseOrder = ['upload', 'matting', 'compositing', 'encoding', 'finalizing'];
+    const phaseNodes = {
+      upload: phaseUpload,
+      matting: phaseMatting,
+      compositing: phaseCompositing,
+      encoding: phaseEncoding,
+      finalizing: phaseFinalizing,
+    };
+    const applyRenderModeUi = () => {
+      if (modeFastBtn) {
+        modeFastBtn.classList.toggle('bg-indigo-500/70', renderMode === 'fast');
+        modeFastBtn.classList.toggle('text-white', renderMode === 'fast');
+        modeFastBtn.classList.toggle('text-zinc-300', renderMode !== 'fast');
+      }
+      if (modeHqBtn) {
+        modeHqBtn.classList.toggle('bg-indigo-500/70', renderMode === 'hq');
+        modeHqBtn.classList.toggle('text-white', renderMode === 'hq');
+        modeHqBtn.classList.toggle('text-zinc-300', renderMode !== 'hq');
+      }
+    };
+
+    const setPhase = (name, label = '') => {
+      const idx = phaseOrder.indexOf(name);
+      phaseOrder.forEach((k, i) => {
+        const el = phaseNodes[k];
+        if (!el) return;
+        el.style.transition = 'all 220ms ease';
+        if (i < idx) {
+          el.style.background = 'rgba(16,185,129,0.15)';
+          el.style.borderColor = 'rgba(16,185,129,0.45)';
+          el.style.color = 'rgb(167 243 208)';
+          el.style.boxShadow = 'none';
+          el.style.transform = 'translateY(0) scale(1)';
+        } else if (i === idx) {
+          el.style.background = 'linear-gradient(90deg, rgba(99,102,241,0.28), rgba(34,211,238,0.22))';
+          el.style.borderColor = 'rgba(56,189,248,0.45)';
+          el.style.color = 'rgb(232 249 255)';
+          el.style.boxShadow = '0 0 0 1px rgba(255,255,255,0.05) inset, 0 0 22px rgba(56,189,248,0.26), 0 8px 22px rgba(14,116,144,0.24)';
+          el.style.transform = 'translateY(-1px) scale(1.015)';
+        } else {
+          el.style.background = 'rgba(255,255,255,0.02)';
+          el.style.borderColor = 'rgba(255,255,255,0.1)';
+          el.style.color = 'rgb(113 113 122)';
+          el.style.boxShadow = 'none';
+          el.style.transform = 'translateY(0) scale(1)';
+        }
+      });
+      if (phaseLabel) phaseLabel.textContent = label || {
+        upload: 'Uploading source',
+        matting: 'Removing background',
+        compositing: 'Building cutout outputs',
+        encoding: 'Encoding GIF + WebM',
+        finalizing: 'Finalizing assets',
+      }[name] || 'Working';
+    };
+
+    const phaseFromServerMessage = (status, message, pct) => {
+      if (status === 'completed') return 'finalizing';
+      const m = String(message || '').toLowerCase();
+      // Backend often reports 97–99 while FFmpeg watermark still runs; do not label that as “done”.
+      if (m.includes('watermark') || m.includes('finishing export') || m.includes('packaging')) return 'encoding';
+      if (m.includes('encoding gif')) return 'encoding';
+      if (m.includes('encoding')) return 'encoding';
+      if (m.includes('finalizing')) return 'finalizing';
+      if (m.includes('compositing') || m.includes('building')) return 'compositing';
+      if (m.includes('removing background') || m.includes('matting')) return 'matting';
+      if (pct >= 85) return 'encoding';
+      if (pct >= 70) return 'compositing';
+      if (pct >= 5) return 'matting';
+      return 'upload';
+    };
+
+    const loadLocal = () => {
+      try {
+        const arr = JSON.parse(localStorage.getItem('formloop_exports_local') || '[]');
+        localSavedItems = Array.isArray(arr) ? arr : [];
+      } catch (_) {
+        localSavedItems = [];
+      }
+    };
+    const saveLocal = (item) => {
+      loadLocal();
+      localSavedItems.unshift(item);
+      localStorage.setItem('formloop_exports_local', JSON.stringify(localSavedItems.slice(0, 100)));
+    };
+    loadLocal();
+
+    const setStepUi = () => {
+      const active = 'bg-cyan-400';
+      const idle = 'bg-white/10';
+      [step1, step2, step3, step4].forEach((el, i) => {
+        if (!el) return;
+        el.className = `h-1.5 rounded-full ${i < step ? active : idle}`;
+      });
+      paneSource.classList.toggle('hidden', step !== 1);
+      paneTrim.classList.toggle('hidden', step !== 2);
+      paneCutout.classList.toggle('hidden', step !== 3);
+      if (title) title.textContent = step === 1 ? 'Source' : (step === 2 ? 'Trim' : 'Cutout');
+      backBtn.textContent = step === 1 ? 'Cancel' : 'Back';
+      nextBtn.textContent = step === 3 ? (webmUrl ? 'Processed' : 'Finish cutout') : 'Continue';
+      if (saveExportBtn) saveExportBtn.classList.toggle('hidden', step !== 3 || (!webmUrl && !gifUrl));
+    };
+    const openModal = () => {
+      modal.classList.remove('hidden');
+      setFlowStatus('');
+      step = 1;
+      webmUrl = '';
+      gifUrl = '';
+      processedJobId = '';
+      if (gifPreview) gifPreview.removeAttribute('src');
+      if (gifProcessingVideo) {
+        gifProcessingVideo.classList.add('hidden');
+        gifProcessingVideo.removeAttribute('src');
+      }
+      if (webmVideo) webmVideo.removeAttribute('src');
+      if (gifUrlEl) gifUrlEl.textContent = '';
+      if (webmUrlEl) webmUrlEl.textContent = '';
+      if (copyGifBtn) copyGifBtn.disabled = true;
+      if (copyWebmBtn) copyWebmBtn.disabled = true;
+      if (gifStatus) gifStatus.textContent = 'Transparent GIF';
+      if (webmStatus) webmStatus.textContent = 'Transparent WebM';
+      if (metadataWrap) metadataWrap.classList.add('hidden');
+      if (progressWrap) progressWrap.classList.add('hidden');
+      if (progressBar) progressBar.style.width = '0%';
+      if (progressText) progressText.textContent = '0%';
+      if (progressStage) progressStage.textContent = 'Preparing render';
+      if (progressElapsed) progressElapsed.textContent = 'Elapsed: 0s';
+      setPhase('upload', 'Waiting for upload');
+      renderMode = 'hq';
+      applyRenderModeUi();
+      if (saveWarn) saveWarn.classList.add('hidden');
+      if (saveExportBtn) {
+        saveExportBtn.classList.add('hidden');
+        saveExportBtn.disabled = false;
+        saveExportBtn.textContent = 'Save export';
+      }
+      if (!originalNextLabel) originalNextLabel = nextBtn.textContent || 'Continue';
+      setStepUi();
+    };
+    if (modeFastBtn) {
+      modeFastBtn.addEventListener('click', () => {
+        renderMode = 'fast';
+        applyRenderModeUi();
+      });
+    }
+    if (modeHqBtn) {
+      modeHqBtn.addEventListener('click', () => {
+        renderMode = 'hq';
+        applyRenderModeUi();
+      });
+    }
+    const closeModal = () => {
+      if (processingController) {
+        processingController.abort();
+        processingController = null;
+      }
+      modal.classList.add('hidden');
+      setFlowStatus('');
+      if (progressTicker) {
+        clearInterval(progressTicker);
+        progressTicker = null;
+      }
+      if (progressPoller) {
+        clearInterval(progressPoller);
+        progressPoller = null;
+      }
+    };
+    const setBusy = (busy, label = '') => {
+      if (busy) {
+        nextBtn.disabled = true;
+        backBtn.disabled = true;
+        nextBtn.classList.add('opacity-70', 'cursor-not-allowed');
+        nextBtn.textContent = label || 'Working...';
+        if (cancelProcessBtn && !webmUrl) cancelProcessBtn.classList.remove('hidden');
+      } else {
+        nextBtn.disabled = false;
+        backBtn.disabled = false;
+        nextBtn.classList.remove('opacity-70', 'cursor-not-allowed');
+        if (label) nextBtn.textContent = label;
+        if (cancelProcessBtn) cancelProcessBtn.classList.add('hidden');
+      }
+    };
+    const updateTrimLabel = () => {
+      const span = Math.max(0, trimB - trimA);
+      if (trimLabel) trimLabel.textContent = `Selected range: ${sec(trimA)} → ${sec(trimB)} (${sec(span)})`;
+    };
+    const bindTrimToVideo = () => {
+      if (!trimVideo) return;
+      trimVideo.ontimeupdate = () => {
+        if (step === 2 && trimVideo.currentTime > trimB) trimVideo.currentTime = trimA;
+      };
+    };
+    const wireFile = (file) => {
+      selectedFile = file;
+      if (nameEl) nameEl.textContent = file.name || 'video';
+      if (metaEl) metaEl.textContent = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = URL.createObjectURL(file);
+      [previewVideo, trimVideo].forEach((v) => { if (v) v.src = objectUrl; });
+      const onMeta = () => {
+        const d = Number(previewVideo?.duration || 0);
+        trimA = 0;
+        trimB = d > 0 ? d : 0;
+        clipDuration = d > 0 ? d : 0;
+        if (trimStart) { trimStart.max = String(trimB); trimStart.value = '0'; }
+        if (trimEnd) { trimEnd.max = String(trimB); trimEnd.value = String(trimB); }
+        if (metaEl && d > 0) metaEl.textContent = `${(file.size / (1024 * 1024)).toFixed(1)} MB · ${sec(d)}`;
+        updateTrimLabel();
+      };
+      if (previewVideo) {
+        previewVideo.onloadedmetadata = onMeta;
+      }
+    };
+    if (gifPreview) {
+      gifPreview.addEventListener('load', () => {
+        gifRetryCount = 0;
+        if (gifStatus && gifUrl) gifStatus.textContent = 'Transparent GIF (ready)';
+      });
+      gifPreview.addEventListener('error', () => {
+        if (!gifUrl) return;
+        if (gifRetryCount >= 2) {
+          if (gifStatus) gifStatus.textContent = 'Transparent GIF (failed to load)';
+          setFlowStatus('GIF preview failed to load. Use the GIF URL or retry.', 'error');
+          return;
+        }
+        gifRetryCount += 1;
+        gifPreview.src = `${gifUrl}${gifUrl.includes('?') ? '&' : '?'}_retry=${Date.now()}`;
+        if (gifStatus) gifStatus.textContent = 'Transparent GIF (retrying...)';
+      });
+    }
+
+    const pickFile = () => input.click();
+    if (btn) btn.addEventListener('click', pickFile);
+    if (topBtn) {
+      topBtn.addEventListener('click', pickFile);
+    }
+    if (emptyCreateBtn) {
+      emptyCreateBtn.addEventListener('click', pickFile);
+    }
+    if (sourceActions && devTestAssetVideoUrl) {
+      const wrap = document.createElement('div');
+      wrap.className = 'mt-2 flex items-center justify-between gap-2';
+      wrap.innerHTML = `
+        <p class="text-[11px] text-zinc-500">Dev source option</p>
+        <button type="button" id="dash-use-test-asset" class="rounded-lg border border-white/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-300 hover:bg-white/[0.05]">Use test asset</button>
+      `;
+      paneSource.appendChild(wrap);
+      const testBtn = document.getElementById('dash-use-test-asset');
+      if (testBtn) {
+        testBtn.addEventListener('click', async () => {
+          try {
+            const resp = await fetch(devTestAssetVideoUrl);
+            if (!resp.ok) throw new Error('Could not load test asset');
+            const blob = await resp.blob();
+            const file = new File([blob], 'test_asset_video.mp4', { type: blob.type || 'video/mp4' });
+            wireFile(file);
+          } catch (e) {
+            setFlowStatus(e?.message || 'Failed to use test asset', 'error');
+          }
+        });
+      }
+    }
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    backBtn.addEventListener('click', () => {
+      if (step === 1) return closeModal();
+      step -= 1;
+      setStepUi();
+    });
+    nextBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+      if (step < 3) {
+        step += 1;
+        setStepUi();
+        if (step === 2) bindTrimToVideo();
+        return;
+      }
+      setBusy(true, 'Finishing cutout...');
+      try {
+        if (webmUrl) {
+          setFlowStatus('Already processed. Use "Save export" to store in library.', 'muted');
+          return;
+        }
+        const modeCfg = renderMode === 'fast'
+          ? { gifWidth: 640, gifFps: 10, label: 'Fast preview mode' }
+          : { gifWidth: 960, gifFps: 12, label: 'High quality mode' };
+        setFlowStatus(`Removing background... ${modeCfg.label} selected.`, 'muted');
+        setStatus(`Removing background... ${modeCfg.label}.`, 'muted');
+        pushToast('Processing started', 'info');
+        setPhase('upload', 'Uploading source clip');
+        if (progressWrap) progressWrap.classList.remove('hidden');
+        if (resultWrap) resultWrap.classList.remove('hidden');
+        if (metadataWrap) metadataWrap.classList.add('hidden');
+        if (copyGifBtn) copyGifBtn.disabled = true;
+        if (copyWebmBtn) copyWebmBtn.disabled = true;
+        if (gifStatus) gifStatus.textContent = 'Transparent GIF (processing...)';
+        if (webmStatus) webmStatus.textContent = 'Transparent WebM (processing...)';
+        if (gifProcessingVideo) {
+          gifProcessingVideo.src = objectUrl;
+          gifProcessingVideo.classList.remove('hidden');
+        }
+        if (gifPreview) gifPreview.classList.add('hidden');
+        if (webmVideo) webmVideo.src = objectUrl;
+        const startedAt = Date.now();
+        if (progressTicker) clearInterval(progressTicker);
+        if (progressPoller) clearInterval(progressPoller);
+        progressTicker = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+          if (progressElapsed) progressElapsed.textContent = `Elapsed: ${elapsed}s`;
+        }, 900);
+        const fd = new FormData();
+        fd.append('file', selectedFile);
+        processingController = new AbortController();
+        const query = new URLSearchParams({
+          premium: 'false',
+          transparent_formats: 'gif',
+          gif_width: String(modeCfg.gifWidth),
+          gif_fps: String(modeCfg.gifFps),
+          fast_mode: renderMode === 'fast' ? 'true' : 'false',
+          model: 'pro',
+          gif_white_bg: 'false',
+        });
+        const res = await fetch(`/api/v1/matte/start?${query.toString()}`, {
+          method: 'POST',
+          body: fd,
+          credentials: 'same-origin',
+          signal: processingController.signal,
+        });
+        processingController = null;
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const detail = (body && body.detail) ? String(body.detail) : `Request failed (${res.status})`;
+          throw new Error(detail);
+        }
+        processedJobId = String(body?.job_id || '');
+        setPhase('matting', 'Removing background');
+        if (progressStage) progressStage.textContent = 'Matting in progress';
+        if (!processedJobId) throw new Error('Processing started but job id is missing.');
+        let lastProgress = 1;
+        let finalResult = null;
+        await new Promise((resolve, reject) => {
+          progressPoller = setInterval(async () => {
+            try {
+              const pr = await fetch(`/api/v1/matte/progress/${processedJobId}`, { credentials: 'same-origin' });
+              const pb = await pr.json().catch(() => ({}));
+              if (!pr.ok) {
+                const detail = pb?.detail ? String(pb.detail) : `Progress check failed (${pr.status})`;
+                throw new Error(detail);
+              }
+              const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+              const p = Math.max(lastProgress, Math.min(99, Number(pb?.progress || 1)));
+              lastProgress = p;
+              if (progressBar) progressBar.style.width = `${p}%`;
+              if (progressText) progressText.textContent = `${p}%`;
+              const eta = p > 0 ? Math.max(0, Math.round((elapsed * (100 - p)) / p)) : 0;
+              if (progressElapsed) progressElapsed.textContent = `Elapsed: ${elapsed}s · ETA: ~${eta}s`;
+              const msg = String(pb?.message || 'Removing background');
+              const phaseNow = phaseFromServerMessage(String(pb?.status || ''), msg, p);
+              setPhase(phaseNow);
+              if (progressStage) progressStage.textContent = msg;
+              setFlowStatus(`${msg} ${p}% · elapsed ${elapsed}s · ETA ~${eta}s`, 'muted');
+              nextBtn.textContent = `Processing ${p}%`;
+              if (pb?.status === 'failed') {
+                throw new Error(String(pb?.error || pb?.message || 'Processing failed.'));
+              }
+              if (pb?.status === 'completed') {
+                finalResult = pb?.result || null;
+                clearInterval(progressPoller);
+                progressPoller = null;
+                resolve();
+              }
+            } catch (e) {
+              if (progressPoller) {
+                clearInterval(progressPoller);
+                progressPoller = null;
+              }
+              reject(e);
+            }
+          }, 1000);
+        });
+        webmUrl = finalResult?.background_removed?.transparent_video_webm || '';
+        gifUrl = finalResult?.gif_and_animation?.transparent_gif || '';
+        if (!webmUrl && !gifUrl) throw new Error('Processing finished but output URLs are missing.');
+        if (progressTicker) {
+          clearInterval(progressTicker);
+          progressTicker = null;
+        }
+        if (progressPoller) {
+          clearInterval(progressPoller);
+          progressPoller = null;
+        }
+        if (progressBar) progressBar.style.width = '100%';
+        if (progressText) progressText.textContent = '100%';
+        if (progressStage) progressStage.textContent = 'Ready to review and save';
+        setPhase('finalizing', 'Processing complete');
+        const totalElapsed = Math.floor((Date.now() - startedAt) / 1000);
+        if (progressElapsed) progressElapsed.textContent = `Elapsed: ${totalElapsed}s · ETA: done`;
+        if (webmVideo && webmUrl) {
+          webmVideo.src = webmUrl;
+        } else if (webmVideo) {
+          try {
+            webmVideo.pause();
+            webmVideo.removeAttribute('src');
+            webmVideo.load();
+          } catch (_) {}
+        }
+        if (gifPreview && gifUrl) {
+          gifRetryCount = 0;
+          if (gifStatus) gifStatus.textContent = 'Transparent GIF (loading...)';
+          gifPreview.removeAttribute('src');
+          gifPreview.src = `${gifUrl}${gifUrl.includes('?') ? '&' : '?'}_ts=${Date.now()}`;
+        }
+        if (gifPreview) gifPreview.classList.remove('hidden');
+        if (gifProcessingVideo) {
+          gifProcessingVideo.classList.add('hidden');
+          gifProcessingVideo.pause();
+        }
+        if (resultWrap) resultWrap.classList.remove('hidden');
+        if (metadataWrap) metadataWrap.classList.remove('hidden');
+        if (webmUrlEl) webmUrlEl.textContent = webmUrl || 'not available';
+        if (gifUrlEl) gifUrlEl.textContent = gifUrl || 'not available';
+        if (gifStatus && !gifUrl) gifStatus.textContent = 'Transparent GIF (not available)';
+        if (webmStatus) webmStatus.textContent = webmUrl ? 'Transparent WebM (ready)' : 'Transparent WebM (not available)';
+        if (copyGifBtn) copyGifBtn.disabled = !gifUrl;
+        if (copyWebmBtn) copyWebmBtn.disabled = !webmUrl;
+        if (saveExportBtn) saveExportBtn.classList.remove('hidden');
+        nextBtn.textContent = 'Processed';
+        nextBtn.disabled = true;
+        setFlowStatus(
+          webmUrl
+            ? 'Background removed. Review GIF/WebM then save export.'
+            : 'Background removed (transparent GIF). Review then save — WebM will appear after worker update if missing.',
+          'ok',
+        );
+        setStatus('Background removed. Review outputs then save export.', 'ok');
+        pushToast('Processing completed', 'ok');
+        if (saveWarn) {
+          // Local testing: keep warning hidden to reduce UI noise.
+          saveWarn.classList.add('hidden');
+        }
+      } catch (err) {
+        processingController = null;
+        if (progressTicker) {
+          clearInterval(progressTicker);
+          progressTicker = null;
+        }
+        if (progressPoller) {
+          clearInterval(progressPoller);
+          progressPoller = null;
+        }
+        const aborted = err && (err.name === 'AbortError' || /aborted|abort/i.test(String(err.message || '')));
+        const msg = aborted ? 'Processing cancelled.' : ((err && err.message) ? err.message : 'Failed to process export.');
+        if (progressStage) progressStage.textContent = aborted ? 'Cancelled' : 'Failed';
+        setPhase('upload', aborted ? 'Cancelled by user' : 'Needs retry');
+        setFlowStatus(msg, 'error');
+        setStatus(msg, 'error');
+        pushToast(msg, 'error');
+      } finally {
+        if (!webmUrl && !gifUrl) {
+          setBusy(false);
+        } else {
+          backBtn.disabled = false;
+          if (cancelProcessBtn) cancelProcessBtn.classList.add('hidden');
+        }
+      }
+    });
+    if (cancelProcessBtn) {
+      cancelProcessBtn.addEventListener('click', () => {
+        if (processingController) {
+          processingController.abort();
+          processingController = null;
+          if (progressTicker) {
+            clearInterval(progressTicker);
+            progressTicker = null;
+          }
+          if (progressPoller) {
+            clearInterval(progressPoller);
+            progressPoller = null;
+          }
+          setBusy(false, webmUrl ? 'Processed' : 'Finish cutout');
+          if (progressStage) progressStage.textContent = 'Cancelled';
+          setPhase('upload', 'Cancelled by user');
+          setFlowStatus('Processing wait cancelled. Job may still finish on server.', 'error');
+          setStatus('Processing wait cancelled. Job may still finish on server.', 'error');
+          pushToast('Processing cancelled', 'error');
+        }
+      });
+    }
+    if (saveExportBtn) {
+      saveExportBtn.addEventListener('click', async () => {
+        if (!webmUrl && !gifUrl) {
+          setFlowStatus('Process the clip first.', 'error');
+          return;
+        }
+        saveExportBtn.disabled = true;
+        saveExportBtn.textContent = 'Saving...';
+        const exportId = `exp_${Date.now()}`;
+        let storageGifUrl = null;
+        let storageWebmUrl = null;
+        let cloudUploadFailed = false;
+        try {
+          if (processedJobId) {
+            const markRes = await fetch(`/api/v1/matte/save/${processedJobId}`, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                export_id: exportId,
+                gif_url: gifUrl || '',
+                webm_url: webmUrl || '',
+              }),
+            });
+            const markBody = await markRes.json().catch(() => ({}));
+            if (!markRes.ok) {
+              const detail = markBody?.detail ? String(markBody.detail) : `Failed to mark saved (${markRes.status})`;
+              // Keep local/cloud save working even if server-side "mark saved" requires session auth.
+              if (markRes.status === 401 || markRes.status === 403) {
+                setFlowStatus('Server library save needs sign-in; continuing with app save.', 'muted');
+              } else {
+                throw new Error(detail);
+              }
+            } else {
+              if (markBody.storageGifUrl) storageGifUrl = String(markBody.storageGifUrl);
+              if (markBody.storageWebmUrl) storageWebmUrl = String(markBody.storageWebmUrl);
+              if (markBody.storageError) {
+                cloudUploadFailed = true;
+                pushToast(`Cloud upload: ${String(markBody.storageError)}`, 'error');
+                setFlowStatus('Cloud upload to your library folder failed. Check API logs.', 'error');
+              }
+            }
+          }
+          const titleVal = (titleInput?.value || '').trim() || (selectedFile?.name || 'Untitled export');
+          const tagsVal = (tagsInput?.value || '').split(',').map((x) => x.trim()).filter(Boolean);
+          const durationLabel = sec(clipDuration || Math.max(0, trimB - trimA));
+          const payload = {
+            id: exportId,
+            title: titleVal,
+            customTags: tagsVal,
+            durationLabel,
+            createdAt: new Date().toISOString(),
+            webmUrl: storageWebmUrl || webmUrl || null,
+            gifUrl: storageGifUrl || gifUrl || null,
+            jobId: processedJobId || null,
+            speedLabel: 'Normal',
+            loopLabel: 'Normal',
+            uid: sessionUid || '',
+            ownerEmail: sessionEmail || '',
+          };
+          saveLocal(payload);
+          const current = fbAuth.currentUser;
+          if (current) {
+            await setDoc(doc(fbDb, 'users', current.uid, 'exports', exportId), {
+              ...payload,
+              uid: current.uid,
+              ownerEmail: current.email || sessionEmail || '',
+              createdAtServer: serverTimestamp(),
+              updatedAtServer: serverTimestamp(),
+            }, { merge: true });
+            setFlowStatus('Saved to local + cloud library.', 'ok');
+          }
+          if (!current) {
+            setFlowStatus('Saved locally. Sign in to sync to cloud library.', 'muted');
+          }
+          setFlowStatus('Export saved. Returning to library...', 'ok');
+          setStatus('Export saved. Returning to library...', 'ok');
+          if (!cloudUploadFailed) pushToast('Export saved', 'ok');
+          window.location.href = '/dashboard/gifs';
+        } catch (err) {
+          const msg = (err && err.message) ? err.message : 'Failed to save export.';
+          setFlowStatus(msg, 'error');
+          setStatus(msg, 'error');
+          saveExportBtn.disabled = false;
+          saveExportBtn.textContent = 'Save export';
+        }
+      });
+    }
+    if (copyWebmBtn) {
+      copyWebmBtn.addEventListener('click', async () => {
+        if (!webmUrl) return;
+        try {
+          await navigator.clipboard.writeText(webmUrl);
+          setFlowStatus('WebM URL copied.', 'ok');
+        } catch (_) {
+          prompt('Copy this WebM URL:', webmUrl);
+        }
+      });
+    }
+    if (copyGifBtn) {
+      copyGifBtn.addEventListener('click', async () => {
+        if (!gifUrl) return;
+        try {
+          await navigator.clipboard.writeText(gifUrl);
+          setFlowStatus('GIF URL copied.', 'ok');
+        } catch (_) {
+          prompt('Copy this GIF URL:', gifUrl);
+        }
+      });
+    }
+    const sp = new URLSearchParams(window.location.search || '');
+    if (sp.get('create') === '1') {
+      setTimeout(() => {
+        openModal();
+        setStatus('Select a video to start a new export.', 'muted');
+      }, 120);
+    }
+    if (trimStart) {
+      trimStart.addEventListener('input', () => {
+        trimA = Number(trimStart.value || 0);
+        if (trimA > trimB) {
+          trimB = trimA;
+          if (trimEnd) trimEnd.value = String(trimB);
+        }
+        if (trimVideo) trimVideo.currentTime = trimA;
+        updateTrimLabel();
+      });
+    }
+    if (trimEnd) {
+      trimEnd.addEventListener('input', () => {
+        trimB = Number(trimEnd.value || 0);
+        if (trimB < trimA) {
+          trimA = trimB;
+          if (trimStart) trimStart.value = String(trimA);
+        }
+        updateTrimLabel();
+      });
+    }
+
+    input.addEventListener('change', async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      if (!String(file.type || '').startsWith('video/')) {
+        setStatus('Please choose a valid video file.', 'error');
+        input.value = '';
+        return;
+      }
+      wireFile(file);
+      openModal();
+      input.value = '';
+    });
+  })();
+
+  document.querySelectorAll('[data-smart-copy]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const type = btn.getAttribute('data-current-type') || 'gif';
+      const u = type === 'webm'
+        ? (btn.getAttribute('data-webm-url') || '')
+        : (btn.getAttribute('data-gif-url') || '');
+      if (!u) return;
+      try {
+        await navigator.clipboard.writeText(u);
+        const label = btn.querySelector('.copy-btn-label');
+        if (label) {
+          const t = label.textContent;
+          label.textContent = 'Copied';
+          setTimeout(() => { label.textContent = t; }, 1400);
+        }
+      } catch (err) {
+        prompt('Copy this URL:', u);
+      }
+    });
+  });
+  document.querySelectorAll('[data-switch-preview]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = btn.getAttribute('data-switch-preview');
+      const target = btn.getAttribute('data-target');
+      const gifEl = document.querySelector(`[data-preview-gif="${id}"]`);
+      const webmEl = document.querySelector(`[data-preview-webm="${id}"]`);
+      const smartDownload = document.querySelector(`[data-smart-download="${id}"]`);
+      const smartLabel = document.querySelector(`[data-smart-download-label="${id}"]`);
+      const smartCopy = document.querySelector(`[data-smart-copy="${id}"]`);
+      const smartCopyLabel = document.querySelector(`[data-smart-copy-label="${id}"]`);
+      const buttons = document.querySelectorAll(`[data-switch-preview="${id}"]`);
+      if (!gifEl) return;
+      buttons.forEach((b) => {
+        const active = b === btn;
+        b.classList.toggle('bg-indigo-500/70', active);
+        b.classList.toggle('text-white', active);
+        b.classList.toggle('bg-white/10', !active);
+        b.classList.toggle('text-zinc-300', !active);
+      });
+      if (target === 'webm' && webmEl) {
+        gifEl.classList.add('hidden');
+        webmEl.classList.remove('hidden');
+        webmEl.play().catch(() => {});
+        if (smartDownload) {
+          const webmUrl = smartDownload.getAttribute('data-webm-url') || '';
+          if (webmUrl) smartDownload.setAttribute('href', webmUrl);
+        }
+        if (smartLabel) smartLabel.textContent = 'Download WebM';
+        if (smartCopy) smartCopy.setAttribute('data-current-type', 'webm');
+        if (smartCopyLabel) smartCopyLabel.textContent = 'Copy WebM URL';
+      } else {
+        gifEl.classList.remove('hidden');
+        if (webmEl) {
+          webmEl.pause();
+          webmEl.classList.add('hidden');
+        }
+        if (smartDownload) {
+          const gifUrl = smartDownload.getAttribute('data-gif-url') || '';
+          if (gifUrl) smartDownload.setAttribute('href', gifUrl);
+        }
+        if (smartLabel) smartLabel.textContent = 'Download GIF';
+        if (smartCopy) smartCopy.setAttribute('data-current-type', 'gif');
+        if (smartCopyLabel) smartCopyLabel.textContent = 'Copy GIF URL';
+      }
+    });
+  });
+</script>
+{% endblock %}
