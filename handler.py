@@ -1,20 +1,19 @@
 import runpod
-import subprocess
 import os
 import tempfile
 import base64
 import json
 import requests
+from types import SimpleNamespace
 import firebase_admin
 from firebase_admin import credentials, storage
+import process_video_pro
 
 try:
     import torch
     print(f"[Env] torch={torch.__version__}")
 except Exception as e:
     print(f"[Env] torch import warning: {e}")
-
-RVM_RUN_TIMEOUT_SEC = int(os.environ.get("RVM_RUN_TIMEOUT_SEC", "1800"))
 
 # Initialize Firebase
 firebase_config_str = os.environ.get("FIREBASE_CONFIG", "{}")
@@ -93,28 +92,24 @@ def handler(job):
             with open(vid_path, "wb") as f:
                 f.write(base64.b64decode(video_b64))
 
-        # Run pipeline
+        # Run pipeline in-process so the worker can reuse loaded models across jobs.
         mode = "BiRefNet-only (fast)" if pro_fast_mode else "BiRefNet + YOLO"
         print(f"[Job] Running pipeline: {mode}")
-        cmd = [
-            "python", "process_video_pro.py",
-            "--input",     vid_path,
-            "--gif",       gif_path,
-            "--gif-width", str(gif_width),
-            "--gif-fps",   str(gif_fps),
-            "--dilation",  str(dilation),
-            "--conf",      str(conf),
-            "--device",    os.environ.get("RVM_DEVICE", "auto"),
-        ]
-        if pro_fast_mode:
-            cmd.append("--no-yolo")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=RVM_RUN_TIMEOUT_SEC)
-
-        print(f"[Job] stdout: {result.stdout[-500:]}")
-
-        if result.returncode != 0:
-            print(f"[Job] Error: {result.stderr[-500:]}")
-            return {"error": result.stderr[-500:]}
+        ns = SimpleNamespace(
+            input=vid_path,
+            gif=gif_path,
+            fg=None,
+            alpha=None,
+            gif_width=gif_width,
+            gif_fps=gif_fps,
+            device=os.environ.get("RVM_DEVICE", "auto"),
+            dilation=int(dilation),
+            conf=float(conf),
+            rvm_downsample=0.4,
+            no_rvm=False,
+            no_yolo=bool(pro_fast_mode),
+        )
+        process_video_pro.run_pipeline(ns)
 
         # Upload to Firebase
         print("[Job] Uploading to Firebase...")
@@ -136,8 +131,6 @@ def handler(job):
                 "warning": "Firebase failed, returning base64"
             }
 
-    except subprocess.TimeoutExpired:
-        return {"error": f"Timeout after {RVM_RUN_TIMEOUT_SEC}s - video too long"}
     except Exception as e:
         return {"error": str(e)}
     finally:

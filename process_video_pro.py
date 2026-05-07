@@ -38,6 +38,7 @@ EXCLUDE = {
 }
 
 INFER_WIDTH = 512
+_BIREFNET_CACHE: dict[str, tuple[torch.nn.Module, torch.device]] = {}
 
 
 def parse_args() -> argparse.Namespace:
@@ -349,21 +350,17 @@ def _writer(path: Path, fps: float, w: int, h: int, gray: bool = False):
     return cv2.VideoWriter(str(path), fourcc, float(fps), (w, h), isColor=(not gray))
 
 
-def main() -> None:
-    args = parse_args()
-    inp = Path(args.input).resolve()
-    if not inp.is_file():
-        raise SystemExit(f"input not found: {inp}")
-
-    device = pick_device(args.device)
-    print(f"[INFO] device={device}", flush=True)
-
+def _get_birefnet(preferred_device: torch.device) -> tuple[torch.nn.Module, torch.device]:
+    key = str(preferred_device)
+    cached = _BIREFNET_CACHE.get(key)
+    if cached is not None:
+        return cached
     print("[BiRefNet] loading ZhengPeng7/BiRefNet …", flush=True)
     try:
         # Keep checkpoint load on CPU; HF / remote code can otherwise touch CUDA during load
         # (progress hits 100% then fails) before our .to(device) fallback runs.
         try:
-            birefnet = AutoModelForImageSegmentation.from_pretrained(
+            model = AutoModelForImageSegmentation.from_pretrained(
                 "ZhengPeng7/BiRefNet",
                 trust_remote_code=True,
                 device_map="cpu",
@@ -375,28 +372,40 @@ def main() -> None:
                 "[WARN] BiRefNet device_map=cpu unavailable; retrying default load …",
                 flush=True,
             )
-            birefnet = AutoModelForImageSegmentation.from_pretrained(
+            model = AutoModelForImageSegmentation.from_pretrained(
                 "ZhengPeng7/BiRefNet",
                 trust_remote_code=True,
             )
-        # MPS/CUDA half weights vs float32 inputs → keep matting in float32 for stability
-        birefnet = birefnet.float()
-        birefnet.eval()
+        model = model.float()
+        model.eval()
+        actual_device = preferred_device
         try:
-            birefnet = birefnet.to(device)
+            model = model.to(preferred_device)
         except Exception as move_exc:
-            if device.type != "cuda":
+            if preferred_device.type != "cuda":
                 raise SystemExit(f"BiRefNet load failed: {move_exc}") from move_exc
             print(
                 f"[WARN] BiRefNet could not use CUDA ({move_exc}); using CPU",
                 flush=True,
             )
-            device = torch.device("cpu")
-            birefnet = birefnet.to(device)
+            actual_device = torch.device("cpu")
+            model = model.to(actual_device)
     except SystemExit:
         raise
     except Exception as exc:
         raise SystemExit(f"BiRefNet load failed: {exc}") from exc
+    _BIREFNET_CACHE[key] = (model, actual_device)
+    return model, actual_device
+
+
+def run_pipeline(args: argparse.Namespace) -> None:
+    inp = Path(args.input).resolve()
+    if not inp.is_file():
+        raise SystemExit(f"input not found: {inp}")
+
+    requested_device = pick_device(args.device)
+    birefnet, device = _get_birefnet(requested_device)
+    print(f"[INFO] device={device}", flush=True)
 
     transform_img = build_transform_img()
 
@@ -503,6 +512,11 @@ def main() -> None:
     )
     frames_to_gif(gif_src, Path(args.gif).resolve(), int(args.gif_fps), int(args.gif_width))
     print(f"[DONE] outputs under: {Path(args.gif).resolve().parent}", flush=True)
+
+
+def main() -> None:
+    args = parse_args()
+    run_pipeline(args)
 
 
 if __name__ == "__main__":
