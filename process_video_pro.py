@@ -41,6 +41,27 @@ INFER_WIDTH = 512
 _BIREFNET_CACHE: dict[str, tuple[torch.nn.Module, torch.device]] = {}
 
 
+def _biref_stride(no_yolo: bool) -> int:
+    raw = (os.environ.get("RVM_PRO_BIREFNET_FRAME_STRIDE") or "").strip()
+    if raw:
+        return max(1, int(raw))
+    return 6 if no_yolo else 2
+
+
+def _infer_resize_w(no_yolo: bool) -> int:
+    raw = (os.environ.get("RVM_PRO_INFER_WIDTH") or "").strip()
+    if raw:
+        return max(256, min(768, int(raw)))
+    return 448 if no_yolo else INFER_WIDTH
+
+
+def _birefnet_input_side(no_yolo: bool) -> int:
+    raw = (os.environ.get("RVM_PRO_BIREFNET_SIZE") or "").strip()
+    if raw:
+        return max(512, min(1024, int(raw)))
+    return 768 if no_yolo else 1024
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--input", required=True, help="input video path")
@@ -111,12 +132,13 @@ def resize_infer_bgr(frame_bgr: np.ndarray, target_w: int = INFER_WIDTH) -> np.n
     return cv2.resize(frame_bgr, (target_w, nh), interpolation=cv2.INTER_AREA)
 
 
-def build_transform_img():
+def build_transform_img(side: int = 1024):
+    side = max(512, min(1024, int(side)))
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
     std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
     def _transform(pil_img: Image.Image) -> torch.Tensor:
-        img = pil_img.resize((1024, 1024), Image.Resampling.BILINEAR)
+        img = pil_img.resize((side, side), Image.Resampling.BILINEAR)
         arr = np.asarray(img, dtype=np.float32) / 255.0
         arr = (arr - mean) / std
         arr = np.transpose(arr, (2, 0, 1))
@@ -407,7 +429,14 @@ def run_pipeline(args: argparse.Namespace) -> None:
     birefnet, device = _get_birefnet(requested_device)
     print(f"[INFO] device={device}", flush=True)
 
-    transform_img = build_transform_img()
+    biref_stride = _biref_stride(bool(args.no_yolo))
+    infer_w = _infer_resize_w(bool(args.no_yolo))
+    biref_side = _birefnet_input_side(bool(args.no_yolo))
+    print(
+        f"[SLA] BiRefNet stride={biref_stride} infer_w={infer_w} square={biref_side} no_yolo={args.no_yolo}",
+        flush=True,
+    )
+    transform_img = build_transform_img(biref_side)
 
     pose_model = None
     seg_model = None
@@ -435,7 +464,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
     print(f"[INFO] {ow}x{oh} @ {fps:.2f}fps, frames={n}", flush=True)
 
     fg_writer = _writer(Path(args.fg).resolve(), fps, ow, oh, gray=False) if args.fg else None
-    a_writer = _writer(Path(args.alpha).resolve(), fps, ow, oh, gray=True) if args.alpha else None
+    # Grayscale alpha as 3-channel for broad OpenCV/mp4v compatibility
+    a_writer = _writer(Path(args.alpha).resolve(), fps, ow, oh, gray=False) if args.alpha else None
 
     obj_mem = ObjectMemory(ttl=6)
     ema = EMA(a=0.65)
@@ -454,10 +484,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
             if idx % 10 == 0:
                 print(f"[INFO] frame {idx}/{n}", flush=True)
 
-            inf = resize_infer_bgr(frame, INFER_WIDTH)
+            inf = resize_infer_bgr(frame, infer_w)
             ih, iw = inf.shape[:2]
 
-            if last_biref_alpha is None or idx % 2 == 1:
+            if last_biref_alpha is None or idx % biref_stride == 1:
                 last_biref_alpha = get_alpha(inf, birefnet, device, transform_img)
             biref_inf = last_biref_alpha
 
@@ -493,8 +523,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 m3 = (alpha_u8.astype(np.float32) / 255.0)[..., None]
                 fg = np.clip(fg * m3, 0, 255).astype(np.uint8)
                 fg_writer.write(fg)
-        if a_writer is not None:
-            a_writer.write(alpha_u8)
+            if a_writer is not None:
+                a_writer.write(cv2.cvtColor(alpha_u8, cv2.COLOR_GRAY2BGR))
     finally:
         cap.release()
         if fg_writer is not None:
@@ -502,7 +532,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
         if a_writer is not None:
             a_writer.release()
 
-    max_gif = max(24, int(os.environ.get("RVM_PRO_GIF_MAX_FRAMES", "480")))
+    _gif_max_default = "280" if args.no_yolo else "480"
+    max_gif = max(24, int(os.environ.get("RVM_PRO_GIF_MAX_FRAMES", _gif_max_default)))
     gif_src = _decimate_frames_for_gif(
         gif_rgba, video_fps=float(fps), gif_fps=int(args.gif_fps), max_frames=max_gif
     )
