@@ -14,6 +14,8 @@ try:
 except Exception as e:
     print(f"[Env] torch import warning: {e}")
 
+RVM_RUN_TIMEOUT_SEC = int(os.environ.get("RVM_RUN_TIMEOUT_SEC", "1800"))
+
 # Initialize Firebase
 firebase_config_str = os.environ.get("FIREBASE_CONFIG", "{}")
 firebase_bucket = os.environ.get("FIREBASE_BUCKET", "")
@@ -106,7 +108,7 @@ def handler(job):
         ]
         if pro_fast_mode:
             cmd.append("--no-yolo")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=RVM_RUN_TIMEOUT_SEC)
 
         print(f"[Job] stdout: {result.stdout[-500:]}")
 
@@ -135,7 +137,7 @@ def handler(job):
             }
 
     except subprocess.TimeoutExpired:
-        return {"error": "Timeout - video too long"}
+        return {"error": f"Timeout after {RVM_RUN_TIMEOUT_SEC}s - video too long"}
     except Exception as e:
         return {"error": str(e)}
     finally:
