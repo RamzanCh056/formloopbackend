@@ -3,6 +3,8 @@ import os
 import tempfile
 import base64
 import json
+import shutil
+import subprocess
 import requests
 from types import SimpleNamespace
 import firebase_admin
@@ -30,18 +32,58 @@ if firebase_config_str and firebase_config_str != "{}" and not firebase_admin._a
     except Exception as e:
         print(f"[Firebase] Init error: {e}")
 
-def upload_to_firebase(gif_path, exercise_name):
+def upload_to_firebase(local_path, dest_path, content_type):
+    """Upload a file to Firebase Storage and return a public https URL."""
     try:
         bucket = storage.bucket()
-        blob = bucket.blob(f"gifs/{exercise_name}.gif")
-        blob.upload_from_filename(gif_path, content_type="image/gif")
+        blob = bucket.blob(dest_path)
+        blob.upload_from_filename(local_path, content_type=content_type)
         blob.make_public()
         url = blob.public_url
-        print(f"[Firebase] Uploaded: {url}")
+        print(f"[Firebase] Uploaded {dest_path}: {url}")
         return url
     except Exception as e:
-        print(f"[Firebase] Upload error: {e}")
+        print(f"[Firebase] Upload error ({dest_path}): {e}")
         return None
+
+
+def _mux_webm_vp9_alpha(fg_mp4, alpha_mp4, out_webm):
+    fc = (
+        "[0:v]format=rgb24[rgb];"
+        "[1:v]format=gray,extractplanes=y[am];"
+        "[rgb][am]alphamerge,format=yuva420p[v]"
+    )
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(fg_mp4),
+        "-i",
+        str(alpha_mp4),
+        "-filter_complex",
+        fc,
+        "-map",
+        "[v]",
+        "-c:v",
+        "libvpx-vp9",
+        "-pix_fmt",
+        "yuva420p",
+        "-auto-alt-ref",
+        "0",
+        "-crf",
+        "32",
+        "-b:v",
+        "0",
+        "-deadline",
+        "good",
+        "-cpu-used",
+        "4",
+        str(out_webm),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 def handler(job):
     print(f"[Job] Starting: {job['id']}")
@@ -52,7 +94,7 @@ def handler(job):
     exercise_name = job_input.get("exercise_name", "exercise")
     gif_width     = max(320, min(1280, int(job_input.get("gif_width", 640))))
     gif_fps       = max(1, min(30, int(job_input.get("gif_fps", 12))))
-    dilation      = job_input.get("dilation", 18)
+    dilation      = job_input.get("dilation", 12)
     conf          = job_input.get("conf", 0.20)
     # True = BiRefNet-only (fast). False = full pipeline with YOLO pose/seg (slower, better props/hands).
     # Stability-first default: keep YOLO disabled unless explicitly allowed.
@@ -84,6 +126,9 @@ def handler(job):
     tmp_dir  = tempfile.mkdtemp()
     vid_path = os.path.join(tmp_dir, f"{exercise_name}.mp4")
     gif_path = os.path.join(tmp_dir, f"{exercise_name}.gif")
+    fg_path = os.path.join(tmp_dir, f"{exercise_name}_foreground.mp4")
+    alpha_path = os.path.join(tmp_dir, f"{exercise_name}_alpha.mp4")
+    webm_path = os.path.join(tmp_dir, f"{exercise_name}_transparent.webm")
 
     try:
         # Save video from either base64 or URL.
@@ -104,8 +149,8 @@ def handler(job):
         ns = SimpleNamespace(
             input=vid_path,
             gif=gif_path,
-            fg=None,
-            alpha=None,
+            fg=fg_path,
+            alpha=alpha_path,
             gif_width=gif_width,
             gif_fps=gif_fps,
             device=os.environ.get("RVM_DEVICE", "auto"),
@@ -125,32 +170,52 @@ def handler(job):
             else:
                 os.environ["RVM_PRO_GIF_WHITE_BG"] = prev_wb
 
-        # Upload to Firebase
-        print("[Job] Uploading to Firebase...")
-        public_url = upload_to_firebase(gif_path, exercise_name)
+        webm_url = None
+        if os.path.isfile(fg_path) and os.path.isfile(alpha_path):
+            try:
+                print("[Job] Muxing transparent WebM (VP9 + alpha)...")
+                _mux_webm_vp9_alpha(fg_path, alpha_path, webm_path)
+                if os.path.isfile(webm_path) and os.path.getsize(webm_path) > 0:
+                    webm_url = upload_to_firebase(
+                        webm_path,
+                        f"webms/{exercise_name}.webm",
+                        "video/webm",
+                    )
+            except Exception as mux_exc:
+                print(f"[Job] WebM mux/upload skipped: {mux_exc}")
 
-        if public_url:
-            return {
-                "status":   "success",
-                "gif_url":  public_url,
-                "exercise": exercise_name
+        # Upload to Firebase
+        print("[Job] Uploading GIF to Firebase...")
+        gif_public_url = upload_to_firebase(
+            gif_path,
+            f"gifs/{exercise_name}.gif",
+            "image/gif",
+        )
+
+        if gif_public_url:
+            out = {
+                "status": "success",
+                "gif_url": gif_public_url,
+                "exercise": exercise_name,
             }
-        else:
-            # Fallback: return base64
-            with open(gif_path, "rb") as f:
-                gif_b64 = base64.b64encode(f.read()).decode("utf-8")
-            return {
-                "status":  "success",
-                "gif_b64": gif_b64,
-                "warning": "Firebase failed, returning base64"
-            }
+            if webm_url:
+                out["webm_url"] = webm_url
+            return out
+        # Fallback: return base64 GIF only
+        with open(gif_path, "rb") as f:
+            gif_b64 = base64.b64encode(f.read()).decode("utf-8")
+        out = {
+            "status": "success",
+            "gif_b64": gif_b64,
+            "warning": "Firebase failed, returning base64",
+        }
+        if webm_url:
+            out["webm_url"] = webm_url
+        return out
 
     except Exception as e:
         return {"error": str(e)}
     finally:
-        if os.path.exists(vid_path): os.unlink(vid_path)
-        if os.path.exists(gif_path): os.unlink(gif_path)
-        try: os.rmdir(tmp_dir)
-        except: pass
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 runpod.serverless.start({"handler": handler})

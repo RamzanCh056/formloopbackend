@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gif-width", type=int, default=640, help="GIF width in pixels")
     p.add_argument("--gif-fps", type=int, default=15, help="GIF fps")
     p.add_argument("--device", default="auto", help="auto / cuda / mps / cpu")
-    p.add_argument("--dilation", type=int, default=18, help="extra final mask dilation px")
+    p.add_argument("--dilation", type=int, default=12, help="extra final mask dilation px (lower = tighter edge, less bg bleed)")
     p.add_argument("--conf", type=float, default=0.20, help="YOLO default confidence (seg uses 0.08 in crops)")
     p.add_argument(
         "--rvm-downsample",
@@ -232,6 +232,10 @@ def get_held_mask(
 
 def combine(birefnet_alpha: np.ndarray, held_mask: np.ndarray | None) -> np.ndarray:
     hard = (birefnet_alpha > 127).astype(np.uint8) * 255
+    opx = max(0, int(os.environ.get("RVM_PRO_MASK_OPEN_PX", "0")))
+    if opx > 0:
+        k0 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * opx + 1, 2 * opx + 1))
+        hard = cv2.morphologyEx(hard, cv2.MORPH_OPEN, k0)
 
     n, labels, stats, _ = cv2.connectedComponentsWithStats(hard, connectivity=8)
     total_px = hard.shape[0] * hard.shape[1]
@@ -298,6 +302,19 @@ def _rgba_from_bgr_and_alpha(frame_bgr: np.ndarray, alpha_u8: np.ndarray) -> np.
     return np.dstack([rgb, alpha_u8])
 
 
+def _alpha_fringe_gamma(alpha_u8: np.ndarray) -> np.ndarray:
+    """Gamma < 1 slightly crushes semi-transparent fringe (cheap halo reduction)."""
+    raw = (os.environ.get("RVM_PRO_ALPHA_FRINGE_GAMMA") or "").strip()
+    if not raw:
+        return alpha_u8
+    g = float(raw)
+    if abs(g - 1.0) < 1e-6:
+        return alpha_u8
+    g = max(0.55, min(1.05, g))
+    a = np.clip((alpha_u8.astype(np.float32) / 255.0) ** g * 255.0, 0, 255).astype(np.uint8)
+    return a
+
+
 def _rgba_whiten_fringe_for_white_backdrop(rgba: np.ndarray) -> np.ndarray:
     """Keep full alpha; pull RGB toward white in semi-transparent edges so halos look neutral on white."""
     if rgba.ndim != 3 or rgba.shape[2] != 4:
@@ -342,8 +359,12 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
     pil_frames: list[Image.Image] = []
     duration_ms = max(1, int(round(1000.0 / float(max(1, fps)))))
     resize_f = getattr(Image, "LANCZOS", Image.Resampling.LANCZOS)
-    q_method = getattr(Image.Quantize, "FASTOCTREE", Image.Quantize.MEDIANCUT)
-    q_colors = max(32, min(255, int(os.environ.get("RVM_PRO_GIF_COLORS", "128"))))
+    q_colors = max(32, min(255, int(os.environ.get("RVM_PRO_GIF_COLORS", "160"))))
+    q_method_name = (os.environ.get("RVM_PRO_GIF_QUANTIZE") or "fast").strip().lower()
+    if q_method_name in {"median", "mediancut", "hq"}:
+        q_method = getattr(Image.Quantize, "MEDIANCUT", Image.Quantize.FASTOCTREE)
+    else:
+        q_method = getattr(Image.Quantize, "FASTOCTREE", Image.Quantize.MEDIANCUT)
     use_dither = (os.environ.get("RVM_PRO_GIF_DITHER", "0").strip().lower() not in {"0", "false", "no"})
     dither = Image.Dither.FLOYDSTEINBERG if use_dither else Image.Dither.NONE
     white_bg = os.environ.get("RVM_PRO_GIF_WHITE_BG", "0").strip().lower() not in {"0", "false", "no"}
@@ -355,10 +376,6 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
         ow, oh = img.size
         nh = max(1, int(round(oh * width / max(1, ow))))
         img = img.resize((width, nh), resize_f)
-        if not white_bg:
-            arr = np.array(img)
-            arr = _rgba_whiten_fringe_for_white_backdrop(arr)
-            img = Image.fromarray(arr, "RGBA")
         if white_bg:
             base = Image.new("RGBA", img.size, (255, 255, 255, 255))
             flat = Image.alpha_composite(base, img).convert("RGB")
@@ -554,7 +571,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 held_fused = None
 
             clean_inf = combine(biref_inf, held_fused)
-            alpha_full = cv2.resize(clean_inf, (ow, oh), interpolation=cv2.INTER_LINEAR)
+            alpha_full = cv2.resize(
+                clean_inf,
+                (ow, oh),
+                interpolation=getattr(cv2, "INTER_LANCZOS4", cv2.INTER_LINEAR),
+            )
 
             alpha_f = alpha_full.astype(np.float32)
             if int(args.dilation) > 0:
@@ -570,13 +591,17 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 ks = max(3, _matte_shrink_px * 2 + 1)
                 k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ks, ks))
                 alpha_u8 = cv2.erode(alpha_u8, k, iterations=1)
+            alpha_u8 = _alpha_fringe_gamma(alpha_u8)
             rgba = _rgba_from_bgr_and_alpha(frame, alpha_u8)
+            if _whiten_edges and not _gif_white:
+                rgba = _rgba_whiten_fringe_for_white_backdrop(rgba)
             gif_rgba.append(rgba)
 
             if fg_writer is not None:
-                fg = frame.astype(np.float32)
-                m3 = (alpha_u8.astype(np.float32) / 255.0)[..., None]
-                fg = np.clip(fg * m3, 0, 255).astype(np.uint8)
+                wrgb = rgba[:, :, :3].astype(np.float32)
+                a = rgba[:, :, 3:4].astype(np.float32) / 255.0
+                premul = np.clip(wrgb * a, 0, 255).astype(np.uint8)
+                fg = cv2.cvtColor(premul, cv2.COLOR_RGB2BGR)
                 fg_writer.write(fg)
             if a_writer is not None:
                 a_writer.write(cv2.cvtColor(alpha_u8, cv2.COLOR_GRAY2BGR))
