@@ -47,43 +47,70 @@ def upload_to_firebase(local_path, dest_path, content_type):
         return None
 
 
-def _mux_webm_vp9_alpha(fg_mp4, alpha_mp4, out_webm):
+def _mux_webm_alpha(fg_mp4, alpha_mp4, out_webm):
+    """VP9 + alpha WebM; fall back to VP8 if VP9 encoder missing (some minimal FFmpeg builds)."""
     fc = (
         "[0:v]format=rgb24[rgb];"
         "[1:v]format=gray,extractplanes=y[am];"
         "[rgb][am]alphamerge,format=yuva420p[v]"
     )
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        str(fg_mp4),
-        "-i",
-        str(alpha_mp4),
-        "-filter_complex",
-        fc,
-        "-map",
-        "[v]",
-        "-c:v",
-        "libvpx-vp9",
-        "-pix_fmt",
-        "yuva420p",
-        "-auto-alt-ref",
-        "0",
-        "-crf",
-        "32",
-        "-b:v",
-        "0",
-        "-deadline",
-        "good",
-        "-cpu-used",
-        "4",
-        str(out_webm),
-    ]
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    last_err = ""
+    for enc_args in (
+        [
+            "-c:v",
+            "libvpx-vp9",
+            "-pix_fmt",
+            "yuva420p",
+            "-auto-alt-ref",
+            "0",
+            "-crf",
+            "32",
+            "-b:v",
+            "0",
+            "-deadline",
+            "good",
+            "-cpu-used",
+            "4",
+        ],
+        [
+            "-c:v",
+            "libvpx",
+            "-pix_fmt",
+            "yuva420p",
+            "-auto-alt-ref",
+            "0",
+            "-crf",
+            "32",
+            "-b:v",
+            "0",
+            "-deadline",
+            "good",
+            "-cpu-used",
+            "4",
+        ],
+    ):
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(fg_mp4),
+            "-i",
+            str(alpha_mp4),
+            "-filter_complex",
+            fc,
+            "-map",
+            "[v]",
+            *enc_args,
+            str(out_webm),
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0 and os.path.isfile(out_webm) and os.path.getsize(out_webm) > 32:
+            return
+        last_err = (r.stderr or r.stdout or "")[-800:]
+    raise RuntimeError(f"WebM mux failed (vp9+vp8): {last_err}")
 
 def handler(job):
     print(f"[Job] Starting: {job['id']}")
@@ -173,8 +200,8 @@ def handler(job):
         webm_url = None
         if os.path.isfile(fg_path) and os.path.isfile(alpha_path):
             try:
-                print("[Job] Muxing transparent WebM (VP9 + alpha)...")
-                _mux_webm_vp9_alpha(fg_path, alpha_path, webm_path)
+                print("[Job] Muxing transparent WebM (VP9/VP8 + alpha)...")
+                _mux_webm_alpha(fg_path, alpha_path, webm_path)
                 if os.path.isfile(webm_path) and os.path.getsize(webm_path) > 0:
                     webm_url = upload_to_firebase(
                         webm_path,

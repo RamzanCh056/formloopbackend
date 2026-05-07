@@ -2,7 +2,7 @@
 FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
 WORKDIR /app
-ARG CACHE_BUST=20260506_1919
+ARG CACHE_BUST=20260508_0130
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     RVM_FORCE_FAST_MODE=1 \
@@ -22,7 +22,8 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     libgl1-mesa-glx \
     libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ffmpeg -hide_banner -encoders 2>/dev/null | grep -E 'libvpx|VP9|VP8' || true
 
 RUN pip install --upgrade --force-reinstall \
     --index-url https://download.pytorch.org/whl/cu121 \
