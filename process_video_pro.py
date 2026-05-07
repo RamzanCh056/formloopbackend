@@ -328,6 +328,7 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
     q_colors = max(32, min(255, int(os.environ.get("RVM_PRO_GIF_COLORS", "128"))))
     use_dither = (os.environ.get("RVM_PRO_GIF_DITHER", "0").strip().lower() not in {"0", "false", "no"})
     dither = Image.Dither.FLOYDSTEINBERG if use_dither else Image.Dither.NONE
+    white_bg = os.environ.get("RVM_PRO_GIF_WHITE_BG", "0").strip().lower() not in {"0", "false", "no"}
     total = len(rgba_frames)
     for fi, rgba in enumerate(rgba_frames):
         if fi > 0 and fi % 80 == 0:
@@ -336,32 +337,44 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
         ow, oh = img.size
         nh = max(1, int(round(oh * width / max(1, ow))))
         img = img.resize((width, nh), resize_f)
-        r, g, b, a = img.split()
-        rgb_p = (
-            Image.merge("RGB", (r, g, b))
-            .quantize(colors=q_colors, method=q_method, dither=dither)
-            .convert("P")
-        )
-        arr = np.array(rgb_p)
-        arr[np.array(a) < 128] = 255
-        frame_p = Image.fromarray(arr, "P")
-        frame_p.putpalette(rgb_p.getpalette())
-        pil_frames.append(frame_p)
+        if white_bg:
+            base = Image.new("RGBA", img.size, (255, 255, 255, 255))
+            flat = Image.alpha_composite(base, img).convert("RGB")
+            rgb_p = flat.quantize(colors=q_colors, method=q_method, dither=dither)
+            pil_frames.append(rgb_p)
+        else:
+            r, g, b, a = img.split()
+            rgb_p = (
+                Image.merge("RGB", (r, g, b))
+                .quantize(colors=q_colors, method=q_method, dither=dither)
+                .convert("P")
+            )
+            arr = np.array(rgb_p)
+            arr[np.array(a) < 128] = 255
+            frame_p = Image.fromarray(arr, "P")
+            frame_p.putpalette(rgb_p.getpalette())
+            pil_frames.append(frame_p)
     if not pil_frames:
         return
     first = pil_frames[0]
-    first.info["transparency"] = 255
-    first.save(
-        str(path),
-        format="GIF",
-        save_all=True,
-        append_images=pil_frames[1:],
-        loop=0,
-        duration=duration_ms,
-        disposal=2,
-        transparency=255,
-        optimize=False,
-    )
+    save_kw: dict = {
+        "format": "GIF",
+        "save_all": True,
+        "append_images": pil_frames[1:],
+        "loop": 0,
+        "duration": duration_ms,
+        "optimize": False,
+    }
+    if white_bg:
+        first.save(str(path), **save_kw)
+    else:
+        first.info["transparency"] = 255
+        first.save(
+            str(path),
+            disposal=2,
+            transparency=255,
+            **save_kw,
+        )
     sz = path.stat().st_size / 1e6
     print(f"[GIF] Saved {path} ({sz:.1f}MB)", flush=True)
 
@@ -437,6 +450,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
         flush=True,
     )
     transform_img = build_transform_img(biref_side)
+
+    _gif_white = os.environ.get("RVM_PRO_GIF_WHITE_BG", "0").strip().lower() not in {"0", "false", "no"}
+    _matte_shrink_px = max(
+        0,
+        int(os.environ.get("RVM_PRO_MATTE_SHRINK_PX", "1" if _gif_white else "0")),
+    )
 
     pose_model = None
     seg_model = None
@@ -515,6 +534,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
             alpha_u8 = np.clip(alpha_f, 0, 255).astype(np.uint8)
             alpha_u8 = ema(alpha_u8)
+            if _matte_shrink_px > 0:
+                ks = max(3, _matte_shrink_px * 2 + 1)
+                k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ks, ks))
+                alpha_u8 = cv2.erode(alpha_u8, k, iterations=1)
             rgba = _rgba_from_bgr_and_alpha(frame, alpha_u8)
             gif_rgba.append(rgba)
 

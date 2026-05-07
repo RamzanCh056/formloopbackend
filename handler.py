@@ -75,6 +75,12 @@ def handler(job):
     if not video_b64 and not video_url:
         return {"error": "No video provided"}
 
+    gif_white_raw = job_input.get("gif_white_bg")
+    if gif_white_raw is None:
+        gif_white_bg = os.environ.get("RVM_PRO_GIF_WHITE_BG", "1").strip().lower() not in {"0", "false", "no"}
+    else:
+        gif_white_bg = bool(gif_white_raw)
+
     tmp_dir  = tempfile.mkdtemp()
     vid_path = os.path.join(tmp_dir, f"{exercise_name}.mp4")
     gif_path = os.path.join(tmp_dir, f"{exercise_name}.gif")
@@ -109,7 +115,15 @@ def handler(job):
             no_rvm=False,
             no_yolo=bool(pro_fast_mode),
         )
-        process_video_pro.run_pipeline(ns)
+        prev_wb = os.environ.get("RVM_PRO_GIF_WHITE_BG")
+        try:
+            os.environ["RVM_PRO_GIF_WHITE_BG"] = "1" if gif_white_bg else "0"
+            process_video_pro.run_pipeline(ns)
+        finally:
+            if prev_wb is None:
+                os.environ.pop("RVM_PRO_GIF_WHITE_BG", None)
+            else:
+                os.environ["RVM_PRO_GIF_WHITE_BG"] = prev_wb
 
         # Upload to Firebase
         print("[Job] Uploading to Firebase...")
