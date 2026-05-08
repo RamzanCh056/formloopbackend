@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import cv2
@@ -20,7 +21,7 @@ from PIL import Image
 from transformers import AutoModelForImageSegmentation
 from ultralytics import YOLO
 
-INFER_WIDTH = 512
+INFER_MAX_DIM = 640
 _BIREFNET_CACHE: dict[str, tuple[torch.nn.Module, torch.device]] = {}
 
 
@@ -68,13 +69,14 @@ def pick_device(pref: str) -> torch.device:
     return torch.device("cpu")
 
 
-def resize_for_inference(frame_bgr: np.ndarray) -> tuple[np.ndarray, float]:
+def resize_for_inference(frame_bgr: np.ndarray, max_dim: int = INFER_MAX_DIM) -> tuple[np.ndarray, float]:
     h, w = frame_bgr.shape[:2]
-    if w <= 0:
+    if h <= 0 or w <= 0:
         return frame_bgr, 1.0
-    scale = float(INFER_WIDTH) / float(w)
+    scale = min(float(max_dim) / float(max(h, w)), 1.0)
+    nw = max(1, int(round(w * scale)))
     nh = max(1, int(round(h * scale)))
-    resized = cv2.resize(frame_bgr, (INFER_WIDTH, nh), interpolation=cv2.INTER_AREA)
+    resized = cv2.resize(frame_bgr, (nw, nh), interpolation=cv2.INTER_AREA)
     return resized, scale
 
 
@@ -225,6 +227,8 @@ def _get_birefnet(preferred_device: torch.device) -> tuple[torch.nn.Module, torc
 
 
 def run_pipeline(args: argparse.Namespace) -> None:
+    start_time = time.time()
+    print("[Pipeline] start processing", flush=True)
     inp = Path(args.input).resolve()
     if not inp.is_file():
         raise SystemExit(f"input not found: {inp}")
@@ -233,19 +237,20 @@ def run_pipeline(args: argparse.Namespace) -> None:
     birefnet, device = _get_birefnet(requested_device)
     transform_img = build_transform_img(1024)
 
-    # STEP 2 — balanced YOLO model, no class filtering.
-    yolo_model = YOLO("yolov8l-seg.pt")
+    # Use lighter YOLO model for serverless performance.
+    yolo_model = YOLO("yolov8n-seg.pt")
     yolo_model.overrides["conf"] = 0.15
 
     cap = cv2.VideoCapture(str(inp))
     if not cap.isOpened():
         raise SystemExit(f"cannot open video: {inp}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    out_fps = 12.0
     ow = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     oh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    fg_writer = _writer(Path(args.fg).resolve(), fps, ow, oh, gray=False) if args.fg else None
-    a_writer = _writer(Path(args.alpha).resolve(), fps, ow, oh, gray=False) if args.alpha else None
+    fg_writer = _writer(Path(args.fg).resolve(), out_fps, ow, oh, gray=False) if args.fg else None
+    a_writer = _writer(Path(args.alpha).resolve(), out_fps, ow, oh, gray=False) if args.alpha else None
 
     gif_frames: list[np.ndarray] = []
     last_yolo_mask_small: np.ndarray | None = None
@@ -262,8 +267,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
             rvm_alpha_small = get_rvm_alpha(frame_small, birefnet, device, transform_img)
             rvm_alpha = cv2.resize(rvm_alpha_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
 
-            # STEP 3 — YOLO every 3 frames, reuse previous mask.
-            if frame_idx % 3 == 0 or last_yolo_mask_small is None:
+            # YOLO every 5 frames, reuse previous mask.
+            if frame_idx % 5 == 0 or last_yolo_mask_small is None:
                 yolo_mask_small = get_yolo_mask(frame_small, yolo_model)
                 last_yolo_mask_small = yolo_mask_small
             else:
@@ -294,11 +299,17 @@ def run_pipeline(args: argparse.Namespace) -> None:
         if a_writer is not None:
             a_writer.release()
 
-    actual_gif_fps = max(1, int(args.gif_fps) // 2)
+    actual_gif_fps = 12
     max_gif = max(24, int(os.environ.get("RVM_PRO_GIF_MAX_FRAMES", "280")))
-    gif_src = _decimate_frames_for_gif(gif_frames, video_fps=float(fps), gif_fps=actual_gif_fps, max_frames=max_gif)
+    gif_src = _decimate_frames_for_gif(
+        gif_frames,
+        video_fps=float(source_fps),
+        gif_fps=actual_gif_fps,
+        max_frames=max_gif,
+    )
     frames_to_gif(gif_src, Path(args.gif).resolve(), actual_gif_fps, int(args.gif_width))
-    print(f"[DONE] outputs under: {Path(args.gif).resolve().parent}", flush=True)
+    print(f"[Pipeline] completed processing: {Path(args.gif).resolve().parent}", flush=True)
+    print(f"TOTAL PROCESS TIME: {time.time()-start_time:.2f}s", flush=True)
 
 
 def main() -> None:
