@@ -1,6 +1,7 @@
 import runpod
 import os
 import tempfile
+import glob
 import base64
 import json
 import shutil
@@ -150,7 +151,8 @@ def handler(job):
     else:
         gif_white_bg = bool(gif_white_raw)
 
-    tmp_dir  = tempfile.mkdtemp()
+    tmp_dir  = tempfile.mkdtemp(dir="/tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
     vid_path = os.path.join(tmp_dir, f"{exercise_name}.mp4")
     gif_path = os.path.join(tmp_dir, f"{exercise_name}.gif")
     fg_path = os.path.join(tmp_dir, f"{exercise_name}_foreground.mp4")
@@ -173,6 +175,8 @@ def handler(job):
         # Run pipeline in-process so the worker can reuse loaded models across jobs.
         mode = "BiRefNet-only (fast)" if pro_fast_mode else "BiRefNet + YOLO"
         print(f"[Job] Running pipeline: {mode}")
+        print(f"[DEBUG] Expected gif_path: {gif_path}")
+        print(f"[DEBUG] tmp_dir: {tmp_dir}")
         ns = SimpleNamespace(
             input=vid_path,
             gif=gif_path,
@@ -196,6 +200,19 @@ def handler(job):
                 os.environ.pop("RVM_PRO_GIF_WHITE_BG", None)
             else:
                 os.environ["RVM_PRO_GIF_WHITE_BG"] = prev_wb
+        print(f"[DEBUG] gif_path = {gif_path}")
+        print(f"[DEBUG] gif exists = {os.path.exists(gif_path)}")
+        print(f"[DEBUG] tmp_dir contents = {os.listdir(tmp_dir)}")
+        all_files = glob.glob(f"{tmp_dir}/**/*", recursive=True)
+        print(f"[DEBUG] All files after pipeline: {all_files}")
+        if not os.path.exists(gif_path):
+            gifs = glob.glob(f"{tmp_dir}/*.gif")
+            print(f"[DEBUG] GIFs found in tmp_dir: {gifs}")
+            if gifs:
+                gif_path = gifs[0]
+                print(f"[DEBUG] Using found gif: {gif_path}")
+            else:
+                return {"error": "GIF not created by pipeline"}
 
         webm_url = None
         if os.path.isfile(fg_path) and os.path.isfile(alpha_path):
