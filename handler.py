@@ -2,6 +2,7 @@ import runpod
 import subprocess
 import os
 import tempfile
+import glob
 import base64
 import json
 import shutil
@@ -131,7 +132,8 @@ def handler(job):
     if not video_b64 and not video_url:
         return {"error": "No video provided"}
 
-    tmp_dir = tempfile.mkdtemp()
+    tmp_dir = tempfile.mkdtemp(dir="/tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
     vid_path = os.path.join(tmp_dir, f"{exercise_name}.mp4")
     gif_path = os.path.join(tmp_dir, f"{exercise_name}.gif")
     fg_path = os.path.join(tmp_dir, f"{exercise_name}_foreground.mp4")
@@ -154,6 +156,8 @@ def handler(job):
         # Run pipeline
         mode = "BiRefNet-only (fast)" if pro_fast_mode else "BiRefNet + YOLO"
         print(f"[Job] Running pipeline: {mode}")
+        print(f"[DEBUG] Expected gif_path: {gif_path}")
+        print(f"[DEBUG] tmp_dir: {tmp_dir}")
         cmd = [
             "python", "process_video_pro.py",
             "--input",     vid_path,
@@ -175,10 +179,21 @@ def handler(job):
         print(f"[DEBUG] gif_path = {gif_path}")
         print(f"[DEBUG] gif exists = {os.path.exists(gif_path)}")
         print(f"[DEBUG] tmp_dir contents = {os.listdir(tmp_dir)}")
+        all_files = glob.glob(f"{tmp_dir}/**/*", recursive=True)
+        print(f"[DEBUG] All files after pipeline: {all_files}")
 
         if result.returncode != 0:
             print(f"[Job] Error: {result.stderr[-500:]}")
             return {"error": result.stderr[-500:]}
+
+        if not os.path.exists(gif_path):
+            gifs = glob.glob(f"{tmp_dir}/*.gif")
+            print(f"[DEBUG] GIFs found in tmp_dir: {gifs}")
+            if gifs:
+                gif_path = gifs[0]
+                print(f"[DEBUG] Using found gif: {gif_path}")
+            else:
+                return {"error": f"GIF not created. Pipeline stdout: {result.stdout[-1000:]}"}
 
         webm_url = None
         if os.path.isfile(fg_path) and os.path.isfile(alpha_path):
