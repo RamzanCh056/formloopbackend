@@ -3,7 +3,7 @@ FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
 WORKDIR /app
 
-ARG CACHE_BUST=20260511_bake_models
+ARG CACHE_BUST=20260512_fix_torch_compat
 RUN echo "Cache bust: $CACHE_BUST"
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install \
-    transformers \
+    "transformers==4.45.0" \
     accelerate \
     ultralytics==8.3.0 \
     requests \
@@ -36,12 +36,9 @@ RUN pip install \
     scipy \
     einops \
     kornia \
-    timm
-
-RUN pip install --upgrade --force-reinstall \
-    --index-url https://download.pytorch.org/whl/cu121 \
-    torch==2.4.1+cu121 \
-    torchaudio==2.4.1+cu121
+    timm \
+    torch \
+    torchaudio
 
 # Bake BiRefNet model into image — eliminates cold start download
 RUN python3 -c "import os; os.makedirs('/app/model_cache', exist_ok=True); from transformers import AutoModelForImageSegmentation; model = AutoModelForImageSegmentation.from_pretrained('ZhengPeng7/BiRefNet', trust_remote_code=True, device_map='cpu'); print('BiRefNet baked OK'); del model"
