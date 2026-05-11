@@ -244,8 +244,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
     birefnet, device = _get_birefnet(requested_device)
     transform_img = build_transform_img(1024)
 
-    yolo_model = YOLO("yolov8n-seg.pt")
-    yolo_model.overrides["conf"] = 0.15
+    # Reuse cached YOLO model if already loaded
+    if not hasattr(run_pipeline, "_yolo_model"):
+        run_pipeline._yolo_model = YOLO("yolov8n-seg.pt")
+        run_pipeline._yolo_model.overrides["conf"] = 0.15
+    yolo_model = run_pipeline._yolo_model
 
     cap = cv2.VideoCapture(str(inp))
     if not cap.isOpened():
