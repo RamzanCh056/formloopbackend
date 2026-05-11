@@ -14,20 +14,15 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     RVM_PRO_GIF_WHITEN_FOR_WHITE=0 \
     TRANSFORMERS_CACHE=/app/model_cache \
     HF_HOME=/app/model_cache \
-    YOLO_CONFIG_DIR=/app/yolo_cache
+    YOLO_CONFIG_DIR=/app/yolo_cache \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
 
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libgl1-mesa-glx \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
-
-RUN pip install --upgrade --force-reinstall \
-    --index-url https://download.pytorch.org/whl/cu121 \
-    torch==2.4.1 \
-    torchaudio==2.4.1
-
-RUN pip uninstall -y torchvision || true
 
 RUN pip install \
     transformers \
@@ -44,6 +39,11 @@ RUN pip install \
     einops \
     kornia \
     timm
+
+RUN pip install --upgrade --force-reinstall \
+    --index-url https://download.pytorch.org/whl/cu121 \
+    torch==2.4.1+cu121 \
+    torchaudio==2.4.1+cu121
 
 # Bake BiRefNet model into image — eliminates cold start download
 RUN python3 -c "import os; os.makedirs('/app/model_cache', exist_ok=True); from transformers import AutoModelForImageSegmentation; model = AutoModelForImageSegmentation.from_pretrained('ZhengPeng7/BiRefNet', trust_remote_code=True, device_map='cpu'); print('BiRefNet baked OK'); del model"
