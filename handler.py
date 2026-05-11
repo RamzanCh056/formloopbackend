@@ -9,7 +9,6 @@ import requests
 from types import SimpleNamespace
 import firebase_admin
 from firebase_admin import credentials, storage
-import process_video_pro
 
 try:
     import torch
@@ -29,6 +28,28 @@ if firebase_config_str and firebase_config_str != "{}" and not firebase_admin._a
         })
     except Exception as e:
         pass
+
+# Pre-warm models at worker startup so first job is fast
+import process_video_pro as _pvp
+import torch as _torch
+
+_PREWARM_DEVICE = os.environ.get("RVM_DEVICE", "auto")
+try:
+    print("[Worker] Pre-warming BiRefNet model...", flush=True)
+    _dev = _pvp.pick_device(_PREWARM_DEVICE)
+    _pvp._get_birefnet(_dev)
+    print("[Worker] BiRefNet ready.", flush=True)
+except Exception as _e:
+    print(f"[Worker] Pre-warm failed (will load on first job): {_e}", flush=True)
+
+try:
+    print("[Worker] Pre-warming YOLO model...", flush=True)
+    from ultralytics import YOLO as _YOLO
+    _yolo_model = _YOLO("yolov8n-seg.pt")
+    _yolo_model.overrides["conf"] = 0.15
+    print("[Worker] YOLO ready.", flush=True)
+except Exception as _e:
+    print(f"[Worker] YOLO pre-warm failed: {_e}", flush=True)
 
 def upload_to_firebase(local_path, dest_path, content_type):
     """Upload a file to Firebase Storage and return a public https URL."""
@@ -98,7 +119,7 @@ def handler(job):
     conf          = job_input.get("conf", 0.20)
     # True = BiRefNet-only (fast). False = full pipeline with YOLO pose/seg (slower, better props/hands).
     # Stability-first default: keep YOLO disabled unless explicitly allowed.
-    force_fast = os.environ.get("RVM_FORCE_FAST_MODE", "1").strip().lower() not in {"0", "false", "no"}
+    force_fast = os.environ.get("RVM_FORCE_FAST_MODE", "0").strip().lower() not in {"0", "false", "no"}
     pro_fast_raw = job_input.get("pro_fast_mode")
     if pro_fast_raw is None:
         # Compatibility alias used by some clients.
@@ -162,7 +183,7 @@ def handler(job):
         prev_wb = os.environ.get("RVM_PRO_GIF_WHITE_BG")
         try:
             os.environ["RVM_PRO_GIF_WHITE_BG"] = "1" if gif_white_bg else "0"
-            process_video_pro.run_pipeline(ns)
+            _pvp.run_pipeline(ns)
         finally:
             if prev_wb is None:
                 os.environ.pop("RVM_PRO_GIF_WHITE_BG", None)
