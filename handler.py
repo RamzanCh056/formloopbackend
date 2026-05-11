@@ -71,7 +71,7 @@ def _mux_webm_alpha(fg_mp4, alpha_mp4, out_webm):
         "-auto-alt-ref",
         "0",
         "-crf",
-        "32",
+        "24",
         "-b:v",
         "0",
         "-deadline",

@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-RunPod pro pipeline rewrite:
-- BiRefNet alpha + YOLOv8l segmentation union only.
-- No connected components / cleanup / exclusions / erosion.
-- YOLO every 3 frames with mask reuse for speed.
+RunPod pro pipeline - BiRefNet + YOLO union mask + YOLO bbox crop for white bg removal.
 """
 
 from __future__ import annotations
@@ -27,18 +24,18 @@ _BIREFNET_CACHE: dict[str, tuple[torch.nn.Module, torch.device]] = {}
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--input", required=True, help="input video path")
-    p.add_argument("--gif", required=True, help="output GIF path")
-    p.add_argument("--fg", default=None, help="output foreground MP4 (optional)")
-    p.add_argument("--alpha", default=None, help="output alpha MP4 (optional)")
-    p.add_argument("--gif-width", type=int, default=640, help="GIF width in pixels")
-    p.add_argument("--gif-fps", type=int, default=15, help="GIF fps")
-    p.add_argument("--device", default="auto", help="auto / cuda / mps / cpu")
-    p.add_argument("--dilation", type=int, default=0, help="kept for compatibility; not used")
-    p.add_argument("--conf", type=float, default=0.15, help="kept for compatibility; not used")
-    p.add_argument("--rvm-downsample", type=float, default=0.4, help="kept for compatibility")
-    p.add_argument("--no-rvm", action="store_true", help="kept for compatibility")
-    p.add_argument("--no-yolo", action="store_true", help="kept for compatibility")
+    p.add_argument("--input", required=True)
+    p.add_argument("--gif", required=True)
+    p.add_argument("--fg", default=None)
+    p.add_argument("--alpha", default=None)
+    p.add_argument("--gif-width", type=int, default=640)
+    p.add_argument("--gif-fps", type=int, default=15)
+    p.add_argument("--device", default="auto")
+    p.add_argument("--dilation", type=int, default=0)
+    p.add_argument("--conf", type=float, default=0.15)
+    p.add_argument("--rvm-downsample", type=float, default=0.4)
+    p.add_argument("--no-rvm", action="store_true")
+    p.add_argument("--no-yolo", action="store_true")
     return p.parse_args()
 
 
@@ -110,24 +107,27 @@ def get_rvm_alpha(frame_bgr: np.ndarray, model: torch.nn.Module, device: torch.d
 
 def get_yolo_mask(frame_bgr_small: np.ndarray, yolo_model):
     height, width = frame_bgr_small.shape[:2]
-
     yolo_mask = np.zeros((height, width), dtype=np.float32)
-
     results = yolo_model(frame_bgr_small, verbose=False)
-
     for r in results:
         if r.masks is not None:
             for m in r.masks.data:
                 mask = m.cpu().numpy()
                 mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_LINEAR)
                 yolo_mask = np.maximum(yolo_mask, mask * 255.0)
-
     return np.clip(yolo_mask, 0, 255)
 
 
 def _rgba_from_bgr_and_alpha(frame_bgr: np.ndarray, alpha_u8: np.ndarray) -> np.ndarray:
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    return np.dstack([rgb, alpha_u8])
+    # Zero out RGB where alpha == 0 to prevent white matte in GIF
+    rgba = np.zeros((rgb.shape[0], rgb.shape[1], 4), dtype=np.uint8)
+    mask = alpha_u8 > 0
+    rgba[..., 0][mask] = rgb[..., 0][mask]
+    rgba[..., 1][mask] = rgb[..., 1][mask]
+    rgba[..., 2][mask] = rgb[..., 2][mask]
+    rgba[..., 3] = alpha_u8
+    return np.ascontiguousarray(rgba)
 
 
 def _decimate_frames_for_gif(
@@ -150,52 +150,59 @@ def _decimate_frames_for_gif(
 
 
 def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, width: int) -> None:
+    import tempfile
+    import shutil
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    pil_frames: list[Image.Image] = []
-    duration_ms = max(1, int(round(1000.0 / float(max(1, fps)))))
-    resize_f = getattr(Image, "LANCZOS", Image.Resampling.LANCZOS)
-    q_colors = max(32, min(255, int(os.environ.get("RVM_PRO_GIF_COLORS", "192"))))
-    dither = Image.Dither.NONE
-    white_bg = os.environ.get("RVM_PRO_GIF_WHITE_BG", "0").strip().lower() not in {"0", "false", "no"}
-    for rgba in rgba_frames:
-        img = Image.fromarray(rgba, "RGBA")
-        ow, oh = img.size
-        nh = max(1, int(round(oh * width / max(1, ow))))
-        img = img.resize((width, nh), resize_f)
-        if white_bg:
-            base = Image.new("RGBA", img.size, (255, 255, 255, 255))
-            flat = Image.alpha_composite(base, img).convert("RGB")
-            pil_frames.append(flat.quantize(colors=q_colors, method=Image.Quantize.FASTOCTREE, dither=dither))
-        else:
-            r, g, b, a = img.split()
-            rgb_p = (
-                Image.merge("RGB", (r, g, b))
-                .quantize(colors=q_colors, method=Image.Quantize.FASTOCTREE, dither=dither)
-                .convert("P")
-            )
-            arr = np.array(rgb_p)
-            arr[np.array(a) < 128] = 255
-            frame_p = Image.fromarray(arr, "P")
-            frame_p.putpalette(rgb_p.getpalette())
-            pil_frames.append(frame_p)
-    if not pil_frames:
+    if not rgba_frames:
         return
-    first = pil_frames[0]
-    save_kw: dict = {
-        "format": "GIF",
-        "save_all": True,
-        "append_images": pil_frames[1:],
-        "loop": 0,
-        "duration": duration_ms,
-        "optimize": False,
-    }
-    if white_bg:
-        first.save(str(path), **save_kw)
-    else:
-        first.info["transparency"] = 255
-        first.save(str(path), disposal=2, transparency=255, **save_kw)
-    print(f"[GIF] Saved {path}", flush=True)
+    fps_str = str(max(1, int(fps)))
+    resize_f = getattr(Image, "LANCZOS", Image.Resampling.LANCZOS)
+    tmp_dir = tempfile.mkdtemp(prefix="gif_frames_")
+    try:
+        oh, ow = rgba_frames[0].shape[:2]
+        # Autocrop: find the bounding box of all non-transparent pixels
+        # across all frames, then crop to that region with padding.
+        _all_alpha = np.zeros((oh, ow), dtype=np.uint8)
+        for _f in rgba_frames:
+            _all_alpha = np.maximum(_all_alpha, _f[..., 3])
+        _rows = np.any(_all_alpha > 10, axis=1)
+        _cols = np.any(_all_alpha > 10, axis=0)
+        if _rows.any() and _cols.any():
+            _rmin, _rmax = np.where(_rows)[0][[0, -1]]
+            _cmin, _cmax = np.where(_cols)[0][[0, -1]]
+            _pad = 20
+            _rmin = max(0, _rmin - _pad)
+            _rmax = min(oh, _rmax + _pad)
+            _cmin = max(0, _cmin - _pad)
+            _cmax = min(ow, _cmax + _pad)
+            rgba_frames = [_f[_rmin:_rmax, _cmin:_cmax] for _f in rgba_frames]
+            oh, ow = rgba_frames[0].shape[:2]
+        nh = max(1, int(round(oh * width / max(1, ow))))
+        for i, rgba in enumerate(rgba_frames):
+            img = Image.fromarray(rgba, "RGBA")
+            img = img.resize((width, nh), resize_f)
+            img.save(os.path.join(tmp_dir, f"frame_{i:05d}.png"), format="PNG")
+        pattern = os.path.join(tmp_dir, "frame_%05d.png")
+        palette = os.path.join(tmp_dir, "palette.png")
+        subprocess.run([
+            "ffmpeg", "-y", "-framerate", fps_str, "-i", pattern,
+            "-vf", "palettegen=reserve_transparent=1:transparency_color=000000",
+            palette,
+        ], check=True, capture_output=True)
+        subprocess.run([
+            "ffmpeg", "-y", "-framerate", fps_str,
+            "-i", pattern, "-i", palette,
+            "-lavfi", "paletteuse=dither=none:diff_mode=rectangle",
+            str(path),
+        ], check=True, capture_output=True)
+        print(f"[GIF] Saved {path} ({path.stat().st_size // 1024}KB, {len(rgba_frames)} frames)", flush=True)
+    except subprocess.CalledProcessError as e:
+        err = e.stderr.decode() if e.stderr else str(e)
+        print(f"[GIF] ffmpeg error: {err[-400:]}", flush=True)
+        raise
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _writer(path: Path, fps: float, w: int, h: int, gray: bool = False):
@@ -237,7 +244,6 @@ def run_pipeline(args: argparse.Namespace) -> None:
     birefnet, device = _get_birefnet(requested_device)
     transform_img = build_transform_img(1024)
 
-    # Use lighter YOLO model for serverless performance.
     yolo_model = YOLO("yolov8n-seg.pt")
     yolo_model.overrides["conf"] = 0.15
 
@@ -254,6 +260,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
     gif_frames: list[np.ndarray] = []
     last_yolo_mask_small: np.ndarray | None = None
+    last_yolo_results = None
     frame_idx = 0
     try:
         while True:
@@ -263,22 +270,41 @@ def run_pipeline(args: argparse.Namespace) -> None:
             frame_idx += 1
             frame_small, _scale = resize_for_inference(frame)
 
-            # RVM alpha on resized frame, then scale back.
+            # BiRefNet alpha
             rvm_alpha_small = get_rvm_alpha(frame_small, birefnet, device, transform_img)
             rvm_alpha = cv2.resize(rvm_alpha_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
 
-            # YOLO every 5 frames, reuse previous mask.
+            # YOLO every 5 frames
             if frame_idx % 5 == 0 or last_yolo_mask_small is None:
-                yolo_mask_small = get_yolo_mask(frame_small, yolo_model)
+                yolo_results = yolo_model(frame_small, verbose=False)
+                last_yolo_results = yolo_results
+                yolo_mask_small = np.zeros((frame_small.shape[0], frame_small.shape[1]), dtype=np.float32)
+                for r in yolo_results:
+                    if r.masks is not None:
+                        for m in r.masks.data:
+                            mask = m.cpu().numpy()
+                            mask = cv2.resize(mask, (frame_small.shape[1], frame_small.shape[0]), interpolation=cv2.INTER_LINEAR)
+                            yolo_mask_small = np.maximum(yolo_mask_small, mask * 255.0)
+                yolo_mask_small = np.clip(yolo_mask_small, 0, 255)
                 last_yolo_mask_small = yolo_mask_small
             else:
                 yolo_mask_small = last_yolo_mask_small
+                yolo_results = last_yolo_results
+
             yolo_mask = cv2.resize(yolo_mask_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
 
-            # STEP 1 — union only (no cleanup / erosion / connected components).
+            # Union of BiRefNet + YOLO
             final_mask = np.maximum(rvm_alpha.astype(np.float32), yolo_mask)
             final_mask = cv2.GaussianBlur(final_mask, (5, 5), 0)
             final_mask = final_mask.astype(np.uint8)
+
+            # Use YOLO segmentation mask dilated as the crop boundary.
+            # This traces the exact person shape instead of a rectangle.
+            if yolo_mask.max() > 10:
+                _seg = (yolo_mask > 10).astype(np.uint8) * 255
+                _dk2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (30, 30))
+                _seg_dilated = cv2.dilate(_seg, _dk2)
+                final_mask[_seg_dilated == 0] = 0
 
             rgba = _rgba_from_bgr_and_alpha(frame, final_mask)
 
@@ -289,7 +315,6 @@ def run_pipeline(args: argparse.Namespace) -> None:
             if a_writer is not None:
                 a_writer.write(cv2.cvtColor(final_mask, cv2.COLOR_GRAY2BGR))
 
-            # STEP 2.5 — skip GIF frames.
             if frame_idx % 2 == 0:
                 gif_frames.append(rgba)
     finally:
@@ -308,8 +333,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
         max_frames=max_gif,
     )
     frames_to_gif(gif_src, Path(args.gif).resolve(), actual_gif_fps, int(args.gif_width))
-    print(f"[Pipeline] completed processing: {Path(args.gif).resolve().parent}", flush=True)
-    print(f"TOTAL PROCESS TIME: {time.time()-start_time:.2f}s", flush=True)
+    print(f"[Pipeline] done in {time.time() - start_time:.2f}s", flush=True)
 
 
 def main() -> None:
