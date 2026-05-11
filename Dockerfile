@@ -14,9 +14,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     RVM_PRO_GIF_WHITEN_FOR_WHITE=0 \
     TRANSFORMERS_CACHE=/app/model_cache \
     HF_HOME=/app/model_cache \
-    YOLO_CONFIG_DIR=/app/yolo_cache \
-    HF_HUB_OFFLINE=1 \
-    TRANSFORMERS_OFFLINE=1
+    YOLO_CONFIG_DIR=/app/yolo_cache
 
 RUN apt-get update && apt-get install -y \
     ffmpeg \
@@ -50,6 +48,8 @@ RUN python3 -c "import os; os.makedirs('/app/model_cache', exist_ok=True); from 
 
 # Bake YOLO model into image
 RUN python3 -c "import os; os.makedirs('/app/yolo_cache', exist_ok=True); os.environ['YOLO_CONFIG_DIR']='/app/yolo_cache'; from ultralytics import YOLO; m=YOLO('yolov8n-seg.pt'); print('YOLO baked OK')"
+
+ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
 COPY process_video_pro.py .
 COPY handler.py .
