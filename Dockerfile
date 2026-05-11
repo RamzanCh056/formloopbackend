@@ -46,32 +46,10 @@ RUN pip install \
     timm
 
 # Bake BiRefNet model into image — eliminates cold start download
-RUN python3 -c "
-import os
-os.makedirs('/app/model_cache', exist_ok=True)
-from transformers import AutoModelForImageSegmentation
-model = AutoModelForImageSegmentation.from_pretrained(
-    'ZhengPeng7/BiRefNet',
-    trust_remote_code=True,
-    device_map='cpu',
-)
-print('BiRefNet baked into image OK')
-del model
-"
+RUN python3 -c "import os; os.makedirs('/app/model_cache', exist_ok=True); from transformers import AutoModelForImageSegmentation; model = AutoModelForImageSegmentation.from_pretrained('ZhengPeng7/BiRefNet', trust_remote_code=True, device_map='cpu'); print('BiRefNet baked OK'); del model"
 
 # Bake YOLO model into image
-RUN python3 -c "
-import os
-os.makedirs('/app/yolo_cache', exist_ok=True)
-os.environ['YOLO_CONFIG_DIR'] = '/app/yolo_cache'
-from ultralytics import YOLO
-model = YOLO('yolov8n-seg.pt')
-import shutil
-for pt in ['yolov8n-seg.pt']:
-    if os.path.exists(pt):
-        shutil.copy(pt, '/app/' + pt)
-print('YOLO baked into image OK')
-"
+RUN python3 -c "import os, shutil; os.makedirs('/app/yolo_cache', exist_ok=True); os.environ['YOLO_CONFIG_DIR']='/app/yolo_cache'; from ultralytics import YOLO; m=YOLO('yolov8n-seg.pt'); [shutil.copy(p, '/app/'+p) for p in ['yolov8n-seg.pt'] if os.path.exists(p)]; print('YOLO baked OK')"
 
 COPY process_video_pro.py .
 COPY handler.py .
