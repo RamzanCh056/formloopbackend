@@ -15,6 +15,11 @@ try:
 except Exception as e:
     pass
 
+os.environ["TRANSFORMERS_CACHE"] = "/app/model_cache"
+os.environ["HF_HOME"] = "/app/model_cache"
+os.environ["HUGGINGFACE_HUB_CACHE"] = "/app/model_cache"
+os.environ["YOLO_CONFIG_DIR"] = "/app/yolo_cache"
+
 # Initialize Firebase
 firebase_config_str = os.environ.get("FIREBASE_CONFIG", "{}")
 firebase_bucket = os.environ.get("FIREBASE_BUCKET", "")

@@ -212,6 +212,9 @@ def _writer(path: Path, fps: float, w: int, h: int, gray: bool = False):
 
 
 def _get_birefnet(preferred_device: torch.device) -> tuple[torch.nn.Module, torch.device]:
+    os.environ["TRANSFORMERS_CACHE"] = "/app/model_cache"
+    os.environ["HF_HOME"] = "/app/model_cache"
+    os.environ["HUGGINGFACE_HUB_CACHE"] = "/app/model_cache"
     key = str(preferred_device)
     cached = _BIREFNET_CACHE.get(key)
     if cached is not None:
@@ -246,7 +249,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
     # Reuse cached YOLO model if already loaded
     if not hasattr(run_pipeline, "_yolo_model"):
-        run_pipeline._yolo_model = YOLO("yolov8n-seg.pt")
+        _yolo_pt = "/app/yolov8n-seg.pt" if os.path.exists("/app/yolov8n-seg.pt") else "yolov8n-seg.pt"
+        run_pipeline._yolo_model = YOLO(_yolo_pt)
         run_pipeline._yolo_model.overrides["conf"] = 0.15
     yolo_model = run_pipeline._yolo_model
 
