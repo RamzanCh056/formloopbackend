@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--alpha", default=None)
     p.add_argument("--gif-width", type=int, default=640)
     p.add_argument("--gif-fps", type=int, default=15)
-    p.add_argument("--device", default="auto")
+    p.add_argument("--device", default="cuda")
     p.add_argument("--dilation", type=int, default=0)
     p.add_argument("--conf", type=float, default=0.15)
     p.add_argument("--rvm-downsample", type=float, default=0.4)
@@ -220,9 +220,8 @@ def _get_birefnet(preferred_device: torch.device) -> tuple[torch.nn.Module, torc
     if cached is not None:
         return cached
     model = AutoModelForImageSegmentation.from_pretrained(
-        "ZhengPeng7/BiRefNet",
+        'ZhengPeng7/BiRefNet',
         trust_remote_code=True,
-        device_map="cpu",
     )
     model = model.float()
     model.eval()

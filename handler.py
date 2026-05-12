@@ -178,7 +178,7 @@ def handler(job):
             alpha=alpha_path,
             gif_width=gif_width,
             gif_fps=gif_fps,
-            device=os.environ.get("RVM_DEVICE", "auto"),
+            device=os.environ.get("RVM_DEVICE", "cuda"),
             dilation=int(dilation),
             conf=float(conf),
             rvm_downsample=0.4,
