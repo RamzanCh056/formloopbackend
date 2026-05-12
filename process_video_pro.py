@@ -230,13 +230,15 @@ def _get_birefnet(preferred_device: torch.device) -> tuple[torch.nn.Module, torc
     )
     model = model.float()
     model.eval()
-    actual_device = preferred_device
-    try:
-        model = model.to(preferred_device)
-    except Exception:
+    import torch
+    if torch.cuda.is_available():
+        actual_device = torch.device("cuda")
+        model = model.half().cuda()  # float16 on GPU = 2x faster
+        print(f"[BiRefNet] FORCED to CUDA, dtype=float16", flush=True)
+    else:
         actual_device = torch.device("cpu")
         model = model.to(actual_device)
-    print(f"[BiRefNet] device={actual_device}, dtype={next(model.parameters()).dtype}", flush=True)
+        print(f"[BiRefNet] CUDA not available, using CPU", flush=True)
     _BIREFNET_CACHE[key] = (model, actual_device)
     return model, actual_device
 
