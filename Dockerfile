@@ -41,7 +41,7 @@ RUN pip install \
     torchaudio
 
 # Bake BiRefNet model into image — eliminates cold start download
-RUN python3 -c "import os; os.makedirs('/app/model_cache', exist_ok=True); from transformers import AutoModelForImageSegmentation; model = AutoModelForImageSegmentation.from_pretrained('ZhengPeng7/BiRefNet', trust_remote_code=True, device_map='cpu'); model.save_pretrained('/app/model_cache/birefnet'); print('BiRefNet saved locally OK')"
+RUN python3 -c "import os; os.environ['HF_HOME']='/app/model_cache'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='ZhengPeng7/BiRefNet', local_dir='/app/model_cache/birefnet_local', ignore_patterns=['*.msgpack','flax_model*','tf_model*','rust_model*']); print('BiRefNet snapshot downloaded OK')"
 
 # Bake YOLO model into image
 RUN python3 -c "import os; os.makedirs('/app/yolo_cache', exist_ok=True); os.environ['YOLO_CONFIG_DIR']='/app/yolo_cache'; from ultralytics import YOLO; m=YOLO('yolov8n-seg.pt'); print('YOLO baked OK')"
