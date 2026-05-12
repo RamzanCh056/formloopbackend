@@ -168,19 +168,6 @@ def handler(job):
             with open(vid_path, "wb") as f:
                 f.write(base64.b64decode(video_b64))
 
-        # Trim video if start/end times provided
-        start_time = float(job_input.get("start_time") or 0)
-        end_time = job_input.get("end_time")
-        if start_time > 0 or end_time is not None:
-            trimmed_path = os.path.join(tmp_dir, f"{exercise_name}_trimmed.mp4")
-            trim_cmd = ["ffmpeg", "-y", "-i", vid_path, "-ss", str(start_time)]
-            if end_time is not None:
-                trim_cmd += ["-to", str(float(end_time))]
-            trim_cmd += ["-c", "copy", trimmed_path]
-            subprocess.run(trim_cmd, check=True)
-            vid_path = trimmed_path
-            print(f"[Job] Trimmed: {start_time}s to {end_time}s", flush=True)
-
         # Run pipeline in-process so the worker can reuse loaded models across jobs.
         mode = "BiRefNet-only (fast)" if pro_fast_mode else "BiRefNet + YOLO"
         print(f"[Job] start processing: {mode}")
