@@ -219,9 +219,13 @@ def _get_birefnet(preferred_device: torch.device) -> tuple[torch.nn.Module, torc
     cached = _BIREFNET_CACHE.get(key)
     if cached is not None:
         return cached
+    _local = '/app/model_cache/birefnet'
+    _src = _local if os.path.isdir(_local) else 'ZhengPeng7/BiRefNet'
+    print(f'[BiRefNet] loading from {_src}', flush=True)
     model = AutoModelForImageSegmentation.from_pretrained(
-        'ZhengPeng7/BiRefNet',
+        _src,
         trust_remote_code=True,
+        local_files_only=os.path.isdir(_local),
     )
     model = model.float()
     model.eval()

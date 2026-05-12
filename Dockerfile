@@ -3,7 +3,7 @@ FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
 WORKDIR /app
 
-ARG CACHE_BUST=20260512_fix_torch_compat
+ARG CACHE_BUST=20260512_local_birefnet
 RUN echo "Cache bust: $CACHE_BUST"
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -41,7 +41,7 @@ RUN pip install \
     torchaudio
 
 # Bake BiRefNet model into image — eliminates cold start download
-RUN python3 -c "import os; os.makedirs('/app/model_cache', exist_ok=True); from transformers import AutoModelForImageSegmentation; model = AutoModelForImageSegmentation.from_pretrained('ZhengPeng7/BiRefNet', trust_remote_code=True, device_map='cpu'); print('BiRefNet baked OK'); del model"
+RUN python3 -c "import os; os.makedirs('/app/model_cache', exist_ok=True); from transformers import AutoModelForImageSegmentation; model = AutoModelForImageSegmentation.from_pretrained('ZhengPeng7/BiRefNet', trust_remote_code=True, device_map='cpu'); model.save_pretrained('/app/model_cache/birefnet'); print('BiRefNet saved locally OK')"
 
 # Bake YOLO model into image
 RUN python3 -c "import os; os.makedirs('/app/yolo_cache', exist_ok=True); os.environ['YOLO_CONFIG_DIR']='/app/yolo_cache'; from ultralytics import YOLO; m=YOLO('yolov8n-seg.pt'); print('YOLO baked OK')"
