@@ -42,13 +42,16 @@ def parse_args() -> argparse.Namespace:
 def _cuda_runtime_usable() -> bool:
     if not torch.cuda.is_available():
         return False
+    print("[CUDA] testing runtime...", flush=True)
     try:
         x = torch.zeros(256, 256, device="cuda")
         x = x * 1.001
         torch.cuda.synchronize()
         del x
+        print("[CUDA] runtime OK", flush=True)
         return True
-    except Exception:
+    except Exception as e:
+        print(f"[CUDA] runtime FAILED: {e}", flush=True)
         return False
 
 
@@ -233,6 +236,7 @@ def _get_birefnet(preferred_device: torch.device) -> tuple[torch.nn.Module, torc
     except Exception:
         actual_device = torch.device("cpu")
         model = model.to(actual_device)
+    print(f"[BiRefNet] device={actual_device}, dtype={next(model.parameters()).dtype}", flush=True)
     _BIREFNET_CACHE[key] = (model, actual_device)
     return model, actual_device
 
