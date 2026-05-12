@@ -266,6 +266,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
     a_writer = _writer(Path(args.alpha).resolve(), out_fps, ow, oh, gray=False) if args.alpha else None
 
     gif_frames: list[np.ndarray] = []
+    last_rvm_alpha: np.ndarray | None = None
     last_yolo_mask_small: np.ndarray | None = None
     last_yolo_results = None
     frame_idx = 0
@@ -278,8 +279,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
             frame_small, _scale = resize_for_inference(frame)
 
             # BiRefNet alpha
-            rvm_alpha_small = get_rvm_alpha(frame_small, birefnet, device, transform_img)
-            rvm_alpha = cv2.resize(rvm_alpha_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
+            if frame_idx % 3 == 1 or last_rvm_alpha is None:
+                rvm_alpha_small = get_rvm_alpha(frame_small, birefnet, device, transform_img)
+                rvm_alpha = cv2.resize(rvm_alpha_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
+                last_rvm_alpha = rvm_alpha
+            else:
+                rvm_alpha = last_rvm_alpha
 
             # YOLO every 5 frames
             if frame_idx % 5 == 0 or last_yolo_mask_small is None:
