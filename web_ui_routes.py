@@ -193,6 +193,17 @@ def _user_gif_entries(request: Request, limit: int | None = None) -> list[dict]:
     uid = request.session.get("user_id")
     if not uid:
         return []
+
+    # Primary: Firestore — survives Railway redeployments (ephemeral filesystem)
+    try:
+        from firebase_storage_admin import list_user_exports_from_firestore
+        fs_rows = list_user_exports_from_firestore(str(uid), limit=limit)
+        if fs_rows:
+            return fs_rows
+    except Exception:
+        _log.debug("Firestore gif fetch skipped, falling back to local scan", exc_info=True)
+
+    # Fallback: local api_outputs/ scan (local dev or non-Firebase envs)
     rows = list_matte_gifs_for_owner(str(uid))
     items: list[dict] = []
     seen: set[str] = set()
@@ -208,7 +219,6 @@ def _user_gif_entries(request: Request, limit: int | None = None) -> list[dict]:
             }
         )
     # Backward compatibility: older/manual jobs may miss `.owner`.
-    # If we have room, include unowned local GIF jobs so users still see recent exports.
     if limit is None or len(items) < limit:
         if OUTPUTS_DIR.is_dir():
             dirs = [p for p in OUTPUTS_DIR.iterdir() if p.is_dir() and _JOB_HEX.match(p.name)]
@@ -417,14 +427,21 @@ async def delete_gif_job(request: Request, job_id: str):
         return RedirectResponse("/auth/login?next=/dashboard/gifs", status_code=302)
     if not _JOB_HEX.match(job_id):
         raise HTTPException(status_code=400, detail="invalid job_id")
+    uid = str(request.session.get("user_id") or "")
+    # Remove local job dir if present (local dev / non-ephemeral envs)
     target = (OUTPUTS_DIR / job_id).resolve()
     parent = OUTPUTS_DIR.resolve()
-    uid = str(request.session.get("user_id") or "")
     if target.is_dir() and target.parent == parent:
         owner = read_job_owner(target)
         if owner != uid:
             raise HTTPException(status_code=403, detail="not your clip")
         shutil.rmtree(target, ignore_errors=True)
+    # Remove from Firestore (Railway / Firebase envs)
+    try:
+        from firebase_storage_admin import delete_user_export_from_firestore
+        delete_user_export_from_firestore(uid, job_id)
+    except Exception:
+        _log.debug("Firestore delete skipped for job_id=%s", job_id, exc_info=True)
     return RedirectResponse(_redirect_after_gif_delete(request), status_code=303)
 
 

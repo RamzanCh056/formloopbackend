@@ -216,6 +216,74 @@ def upload_user_export_media_from_urls(
     return {"gifUrl": out_gif, "webmUrl": out_webm}
 
 
+import re as _re
+_JOB_HEX_RE = _re.compile(r"^[0-9a-f]{32}$")
+# Local-dev URLs stored in Firestore by old sessions — never reachable on Railway
+_LOCAL_URL_RE = _re.compile(
+    r'^https?://(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+)(:\d+)?/'
+)
+
+
+def list_user_exports_from_firestore(uid: str, limit: int | None = None) -> list[dict]:
+    """Return the user's saved exports from Firestore users/{uid}/exports.
+
+    Each entry: {job_id, source_filename, gif_url, webm_url}.
+    Returns [] if Firebase is not configured or Firestore is unreachable.
+    """
+    if not firebase_storage_ready():
+        return []
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        snaps = list(db.collection("users").document(uid).collection("exports").stream())
+        rows: list[dict] = []
+        for snap in snaps:
+            data = snap.to_dict() or {}
+            gif_url = (data.get("gifUrl") or "").strip()
+            if not gif_url:
+                continue
+            if _LOCAL_URL_RE.match(gif_url):
+                continue  # localhost URL from an old dev session — dead on Railway
+            job_id = (data.get("jobId") or "").strip()
+            if not _JOB_HEX_RE.match(job_id):
+                continue  # skip exports missing a valid hex job_id
+            rows.append({
+                "job_id": job_id,
+                "export_doc_id": snap.id,
+                "source_filename": (data.get("title") or "").strip() or None,
+                "gif_url": gif_url,
+                "webm_url": (data.get("webmUrl") or "").strip() or None,
+                "created_at": (data.get("createdAt") or ""),
+            })
+        rows.sort(key=lambda r: r["created_at"], reverse=True)
+        if limit is not None:
+            rows = rows[:limit]
+        return rows
+    except Exception as exc:
+        _log.warning("Firestore list_user_exports uid=%s: %s", uid, exc)
+        return []
+
+
+def delete_user_export_from_firestore(uid: str, job_id: str) -> bool:
+    """Delete the Firestore export doc(s) for this user/job_id. Returns True if any were deleted."""
+    if not firebase_storage_ready():
+        return False
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        col = db.collection("users").document(uid).collection("exports")
+        # The doc key is exportId, but jobId is a field — query for it.
+        hits = col.where("jobId", "==", job_id).stream()
+        deleted = False
+        for snap in hits:
+            snap.reference.delete()
+            deleted = True
+        return deleted
+    except Exception as exc:
+        _log.warning("Firestore delete_user_export uid=%s job_id=%s: %s", uid, job_id, exc)
+        return False
+
+
 def upload_runpod_input_video(*, job_id: str, filename: str, local_path: Path) -> str:
     """Upload a job input video and return a signed Firebase media URL."""
     if not firebase_storage_ready():

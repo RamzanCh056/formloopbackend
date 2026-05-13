@@ -17,12 +17,16 @@ import tempfile
 from pathlib import Path
 
 import cv2
+import shutil as _shutil
+
 import numpy as np
 import torch
 from PIL import Image
 from torchvision import transforms
 from transformers import AutoModelForImageSegmentation
 from ultralytics import YOLO
+
+_FFMPEG = _shutil.which("ffmpeg") or "ffmpeg"
 
 # ---------------------------------------------------------------------------
 EXCLUDE = {
@@ -379,7 +383,7 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
         fps_str = str(max(1, int(fps)))
 
         cmd_palette = [
-            "ffmpeg",
+            _FFMPEG,
             "-y",
             "-framerate",
             fps_str,
@@ -394,7 +398,7 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
             raise RuntimeError((rp.stderr or rp.stdout or "palettegen failed")[-1200:])
 
         cmd_gif = [
-            "ffmpeg",
+            _FFMPEG,
             "-y",
             "-framerate",
             fps_str,
@@ -463,7 +467,7 @@ def _mux_webm_alpha(fg_mp4: Path, alpha_mp4: Path, out_webm: Path) -> None:
         ],
     ):
         cmd = [
-            "ffmpeg",
+            _FFMPEG,
             "-y",
             "-hide_banner",
             "-loglevel",

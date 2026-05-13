@@ -46,6 +46,11 @@ APP_ROOT = Path(__file__).resolve().parent
 # macOS + Homebrew Python can crash on fork/exec from multithreaded servers.
 os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 
+# Resolve ffmpeg/ffprobe at import time so Railway (no Homebrew) finds the system binaries.
+import shutil as _shutil
+_FFMPEG  = _shutil.which("ffmpeg")  or "ffmpeg"
+_FFPROBE = _shutil.which("ffprobe") or "ffprobe"
+
 
 def _load_env_file(path: Path) -> None:
     """Populate os.environ from a .env file (first '=' splits key / value)."""
@@ -191,7 +196,7 @@ def _mux_webm_alpha(fg_mp4: Path, alpha_mp4: Path, out_webm: Path) -> None:
         "[rgb][am]alphamerge,format=yuva420p[v]"
     )
     cmd = [
-        "ffmpeg",
+        _FFMPEG,
         "-y",
         "-i",
         str(fg_mp4),
@@ -454,7 +459,7 @@ def _runpod_submit(
     if (start_time and float(start_time) > 0) or end_time is not None:
         trimmed_path = str(src_path).replace(suffix, f"_trimmed{suffix}")
         _probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+            [_FFPROBE, "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", str(src_path)],
             capture_output=True, text=True,
         )
@@ -462,7 +467,7 @@ def _runpod_submit(
         print(f"[Trim] Trimming video: {start_time}s to {end_time}s, duration={duration}s", flush=True)
         st = float(start_time) if start_time else 0.0
         et = float(end_time) if end_time is not None else None
-        trim_cmd = ["ffmpeg", "-y", "-ss", str(st), "-i", str(src_path)]
+        trim_cmd = [_FFMPEG, "-y", "-ss", str(st), "-i", str(src_path)]
         if et is not None:
             trim_cmd += ["-t", str(et - st)]
         trim_cmd += ["-c", "copy", trimmed_path]
@@ -705,7 +710,7 @@ def _rebuild_transparent_gif_from_fg_alpha(work: Path, gif_width: int) -> bool:
         f"[s1][p]paletteuse=alpha_threshold=64:diff_mode=rectangle:dither=sierra2_4a"
     )
     cmd = [
-        "ffmpeg",
+        _FFMPEG,
         "-y",
         "-threads",
         "0",
@@ -1873,9 +1878,10 @@ _DEMO_HTML = """<!DOCTYPE html>
 """
 
 
-@app.get("/", response_class=HTMLResponse)
-async def demo_root() -> str:
-    return _DEMO_HTML
+@app.get("/")
+async def demo_root():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/dashboard", status_code=302)
 
 
 @app.get("/demo", response_class=HTMLResponse)
