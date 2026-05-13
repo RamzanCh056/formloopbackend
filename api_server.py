@@ -46,10 +46,27 @@ APP_ROOT = Path(__file__).resolve().parent
 # macOS + Homebrew Python can crash on fork/exec from multithreaded servers.
 os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 
-# Resolve ffmpeg/ffprobe at import time so Railway (no Homebrew) finds the system binaries.
+# Resolve ffmpeg/ffprobe at import time — probe multiple Nix/system paths so
+# Railway (Nix package manager, not apt) finds the binaries reliably.
 import shutil as _shutil
-_FFMPEG  = _shutil.which("ffmpeg")  or "/usr/bin/ffmpeg"
-_FFPROBE = _shutil.which("ffprobe") or "/usr/bin/ffprobe"
+
+def _find_binary(name: str) -> str:
+    import os
+    p = _shutil.which(name)
+    if p:
+        return p
+    for path in [
+        f"/usr/bin/{name}",
+        f"/usr/local/bin/{name}",
+        f"/nix/var/nix/profiles/default/bin/{name}",
+        f"/run/current-system/sw/bin/{name}",
+    ]:
+        if os.path.isfile(path):
+            return path
+    return name
+
+_FFMPEG  = _find_binary("ffmpeg")
+_FFPROBE = _find_binary("ffprobe")
 
 
 def _load_env_file(path: Path) -> None:

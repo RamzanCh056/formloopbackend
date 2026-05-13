@@ -26,7 +26,22 @@ from torchvision import transforms
 from transformers import AutoModelForImageSegmentation
 from ultralytics import YOLO
 
-_FFMPEG = _shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
+def _find_binary(name: str) -> str:
+    import os
+    p = _shutil.which(name)
+    if p:
+        return p
+    for path in [
+        f"/usr/bin/{name}",
+        f"/usr/local/bin/{name}",
+        f"/nix/var/nix/profiles/default/bin/{name}",
+        f"/run/current-system/sw/bin/{name}",
+    ]:
+        if os.path.isfile(path):
+            return path
+    return name
+
+_FFMPEG = _find_binary("ffmpeg")
 
 # ---------------------------------------------------------------------------
 EXCLUDE = {
