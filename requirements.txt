@@ -83,6 +83,7 @@ shellingham==1.5.4
 six==1.17.0
 slicerator==1.1.0
 sounddevice==0.5.5
+static-ffmpeg==2.5
 starlette==1.0.0
 sympy==1.14.0
 tifffile==2026.3.3

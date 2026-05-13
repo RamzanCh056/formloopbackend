@@ -52,6 +52,12 @@ import shutil as _shutil
 
 def _find_binary(name: str) -> str:
     import os
+    # static-ffmpeg is pip-installed and works on any build system (Railway Railpack, etc.)
+    try:
+        import static_ffmpeg
+        static_ffmpeg.add_paths()
+    except ImportError:
+        pass
     p = _shutil.which(name)
     if p:
         return p

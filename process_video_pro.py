@@ -28,6 +28,11 @@ from ultralytics import YOLO
 
 def _find_binary(name: str) -> str:
     import os
+    try:
+        import static_ffmpeg
+        static_ffmpeg.add_paths()
+    except ImportError:
+        pass
     p = _shutil.which(name)
     if p:
         return p
