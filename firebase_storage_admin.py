@@ -38,7 +38,13 @@ def _credential_dict_from_env_firebase_config() -> dict | None:
     if not fc.startswith("{"):
         return None
     try:
-        return json.loads(fc)
+        obj = json.loads(fc)
+        # Only treat as service-account credentials when the key is present;
+        # FIREBASE_CONFIG may also hold the web config (apiKey, authDomain…)
+        # which must NOT be passed to credentials.Certificate().
+        if isinstance(obj, dict) and obj.get("type") == "service_account":
+            return obj
+        return None
     except json.JSONDecodeError:
         return None
 
@@ -64,7 +70,9 @@ def _credential_dict_from_dotenv_multiline() -> dict | None:
     except json.JSONDecodeError as exc:
         _log.warning("FIREBASE_CONFIG in .env is not valid JSON: %s", exc)
         return None
-    return obj if isinstance(obj, dict) else None
+    if isinstance(obj, dict) and obj.get("type") == "service_account":
+        return obj
+    return None
 
 
 def firebase_storage_ready() -> bool:
