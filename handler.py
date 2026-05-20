@@ -116,6 +116,28 @@ def _mux_webm_alpha(fg_mp4, alpha_mp4, out_webm):
     last_err = (r.stderr or r.stdout or "")[-800:]
     raise RuntimeError(f"WebM mux failed: {last_err}")
 
+def _apply_reverse_loop(gif_path: str) -> bool:
+    """In-place: appends reversed GIF to create a boomerang (forward+reverse) loop."""
+    try:
+        out_path = gif_path + ".boom.gif"
+        r = subprocess.run([
+            "ffmpeg", "-y", "-i", gif_path,
+            "-filter_complex",
+            "[0:v]split[fwd][bwd];[bwd]reverse[rev];[fwd][rev]concat=n=2:v=1:a=0[cat];"
+            "[cat]split[sp][sv];[sp]palettegen=reserve_transparent=1:transparency_color=000000[pal];"
+            "[sv][pal]paletteuse=dither=none:diff_mode=rectangle",
+            "-loop", "0", out_path,
+        ], capture_output=True, text=True)
+        if r.returncode == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 32:
+            os.replace(out_path, gif_path)
+            return True
+        print(f"[Reverse] failed: {(r.stderr or '')[-300:]}", flush=True)
+        return False
+    except Exception as e:
+        print(f"[Reverse] failed: {e}", flush=True)
+        return False
+
+
 def handler(job):
     job_input = job["input"]
 
@@ -124,6 +146,8 @@ def handler(job):
     exercise_name = job_input.get("exercise_name", "exercise")
     gif_width     = max(320, min(1280, int(job_input.get("gif_width", 640))))
     gif_fps       = max(1, min(30, int(job_input.get("gif_fps", 12))))
+    rotation      = int(job_input.get("rotation", 0))
+    loop_style    = str(job_input.get("loop_style", "normal"))
     dilation      = job_input.get("dilation", 12)
     conf          = job_input.get("conf", 0.20)
     # True = BiRefNet-only (fast). False = full pipeline with YOLO pose/seg (slower, better props/hands).
@@ -172,6 +196,20 @@ def handler(job):
             with open(vid_path, "wb") as f:
                 f.write(base64.b64decode(video_b64))
 
+        # Apply rotation before processing if requested
+        if rotation in (90, 180, 270):
+            vf_map = {90: "transpose=1", 180: "vflip,hflip", 270: "transpose=2"}
+            rotated = vid_path + ".rot.mp4"
+            rr = subprocess.run([
+                "ffmpeg", "-y", "-i", vid_path, "-vf", vf_map[rotation],
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-an", rotated,
+            ], capture_output=True, text=True)
+            if rr.returncode == 0 and os.path.isfile(rotated) and os.path.getsize(rotated) > 32:
+                os.replace(rotated, vid_path)
+                print(f"[Job] rotation={rotation}° applied", flush=True)
+            else:
+                print(f"[Job] rotation ffmpeg error: {(rr.stderr or '')[-200:]}", flush=True)
+
         # Run pipeline in-process so the worker can reuse loaded models across jobs.
         mode = "BiRefNet-only (fast)" if pro_fast_mode else "BiRefNet + YOLO"
         print(f"[Job] start processing: {mode}")
@@ -200,6 +238,10 @@ def handler(job):
                 os.environ["RVM_PRO_GIF_WHITE_BG"] = prev_wb
         if not os.path.exists(gif_path):
             return {"error": "GIF not created by pipeline"}
+
+        if loop_style == "reverse":
+            print("[Job] applying reverse loop...", flush=True)
+            _apply_reverse_loop(gif_path)
 
         webm_url = None
         if os.path.isfile(fg_path) and os.path.isfile(alpha_path):

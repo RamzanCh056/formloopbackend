@@ -197,6 +197,7 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
             "ffmpeg", "-y", "-framerate", fps_str,
             "-i", pattern, "-i", palette,
             "-lavfi", "paletteuse=dither=none:diff_mode=rectangle",
+            "-loop", "0",
             str(path),
         ], check=True, capture_output=True)
         print(f"[GIF] Saved {path} ({path.stat().st_size // 1024}KB, {len(rgba_frames)} frames)", flush=True)
@@ -343,7 +344,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
         if a_writer is not None:
             a_writer.release()
 
-    actual_gif_fps = 12
+    actual_gif_fps = max(1, min(24, int(getattr(args, 'gif_fps', 12))))
     max_gif = max(24, int(os.environ.get("RVM_PRO_GIF_MAX_FRAMES", "280")))
     gif_src = _decimate_frames_for_gif(
         gif_frames,
