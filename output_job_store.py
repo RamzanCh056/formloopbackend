@@ -103,12 +103,16 @@ def read_owner_usage_count(owner_uid: str | None) -> int:
     try:
         if p.is_file():
             raw = p.read_text(encoding="utf-8").strip()
-            n = int(raw)
-            # Migration guard: never report lower than currently visible saved items.
-            return max(n, count_matte_gifs_for_owner(uid))
+            return max(0, int(raw))
     except (OSError, ValueError):
         pass
-    return count_matte_gifs_for_owner(uid)
+    # No count file yet: seed from currently visible saved items.
+    # This only runs once — subsequent jobs will write the count file.
+    current = count_matte_gifs_for_owner(uid)
+    if current > 0:
+        USAGE_DIR.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(current), encoding="utf-8")
+    return current
 
 
 def increment_owner_usage(owner_uid: str | None) -> int:

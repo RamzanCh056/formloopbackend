@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /dashboard/gifs/
+Disallow: /auth/session
+Disallow: /auth/logout
+
+Sitemap: https://formloop.app/sitemap.xml

@@ -59,9 +59,20 @@
   </div>
 </div>
 {% else %}
-<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+{% set all_tags = [] %}
+{% for it in items %}{% for t in (it.tags or []) %}{% if t not in all_tags %}{% set _ = all_tags.append(t) %}{% endif %}{% endfor %}{% endfor %}
+<div id="gifs-tag-filter" class="mb-4 flex flex-wrap items-center gap-1.5">
+  <button type="button" data-tag="" class="tag-btn rounded-full border border-indigo-500/50 bg-indigo-500/20 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-indigo-500/30">All</button>
+  {% for t in all_tags %}
+  <button type="button" data-tag="{{ t }}" class="tag-btn rounded-full border border-white/[0.1] bg-white/[0.04] px-3 py-1 text-[11px] font-semibold text-zinc-400 transition hover:bg-white/[0.08] hover:text-white">{{ t }}</button>
+  {% endfor %}
+  {% if not all_tags %}
+  <span class="text-[11px] text-zinc-600 ml-1">Tag your GIFs to filter</span>
+  {% endif %}
+</div>
+<div id="gifs-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
   {% for it in items %}
-  <article class="group relative rounded-xl p-px bg-gradient-to-b from-white/[0.1] to-white/[0.02] hover:from-indigo-500/28 hover:to-violet-500/12 transition-all duration-300 shadow-card hover:shadow-glow flex flex-col">
+  <article data-tags="{{ (it.tags or []) | join(',') }}" class="group relative rounded-xl p-px bg-gradient-to-b from-white/[0.1] to-white/[0.02] hover:from-indigo-500/28 hover:to-violet-500/12 transition-all duration-300 shadow-card hover:shadow-glow flex flex-col">
     <div class="rounded-[11px] bg-elevated/95 border border-white/[0.04] overflow-hidden flex flex-col h-full">
       <div class="relative aspect-[9/16] fl-alpha-checker overflow-hidden ring-1 ring-inset ring-white/[0.06]">
         <a href="{{ it.gif_url }}" target="_blank" rel="noopener" class="absolute inset-0 z-10 block">
@@ -82,6 +93,15 @@
         <div>
           <p class="text-xs font-semibold text-zinc-100 truncate" title="{{ it.source_filename or 'Clip' }}">{{ it.source_filename or 'Clip' }}</p>
           <p class="text-[9px] text-zinc-600 font-mono truncate mt-0.5 tracking-wide">{{ it.job_id[:10] }}…</p>
+          {% if it.platform %}
+          <span class="mt-1 inline-block rounded-full bg-indigo-500/15 border border-indigo-500/25 px-2 py-0.5 text-[9px] font-semibold text-indigo-300 tracking-wide">
+            {% if it.platform == 'powerpoint' %}📊 PowerPoint
+            {% elif it.platform == 'google-slides' %}📑 Google Slides
+            {% elif it.platform == 'keynote' %}🍎 Keynote
+            {% elif it.platform == 'canva' %}🎨 Canva
+            {% else %}🌐 Other{% endif %}
+          </span>
+          {% endif %}
         </div>
         <div class="flex flex-wrap gap-1.5 mt-auto">
           <a
@@ -127,6 +147,29 @@
   </article>
   {% endfor %}
 </div>
+<script>
+(function () {
+  const bar = document.getElementById('gifs-tag-filter');
+  if (!bar) return;
+  let active = '';
+  bar.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tag-btn');
+    if (!btn) return;
+    active = btn.getAttribute('data-tag');
+    bar.querySelectorAll('.tag-btn').forEach((b) => {
+      const isActive = b.getAttribute('data-tag') === active;
+      b.className = isActive
+        ? 'tag-btn rounded-full border border-indigo-500/50 bg-indigo-500/20 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-indigo-500/30'
+        : 'tag-btn rounded-full border border-white/[0.1] bg-white/[0.04] px-3 py-1 text-[11px] font-semibold text-zinc-400 transition hover:bg-white/[0.08] hover:text-white';
+    });
+    document.querySelectorAll('#gifs-grid article[data-tags]').forEach((card) => {
+      if (!active) { card.style.display = ''; return; }
+      const tags = (card.getAttribute('data-tags') || '').split(',').map(t => t.trim()).filter(Boolean);
+      card.style.display = tags.includes(active) ? '' : 'none';
+    });
+  });
+})();
+</script>
 <script>
   document.querySelectorAll('[data-smart-copy]').forEach((btn) => {
     btn.addEventListener('click', async () => {

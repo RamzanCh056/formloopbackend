@@ -54,6 +54,7 @@ PLANS_ORDERED: tuple[PlanSpec, ...] = (
         tagline="50 GIFs / month · batch processing",
         features=(
             "50 GIFs per billing month",
+            "No FormLoop watermark",
             "Batch processing",
             "Priority queue",
             "Higher-quality pipeline options",
@@ -71,6 +72,7 @@ PLANS_ORDERED: tuple[PlanSpec, ...] = (
         tagline="Unlimited GIFs · best for teams",
         features=(
             "Unlimited transparent GIFs",
+            "No FormLoop watermark",
             "Batch processing",
             "Priority queue",
             "Dedicated throughput",

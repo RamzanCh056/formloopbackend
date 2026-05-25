@@ -417,6 +417,7 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
         if rp.returncode != 0:
             raise RuntimeError((rp.stderr or rp.stdout or "palettegen failed")[-1200:])
 
+        print(f"[GIF FPS] frames_to_gif: fps={fps} fps_str={fps_str}, n_frames={len(rgba_frames)}", flush=True)
         cmd_gif = [
             _FFMPEG,
             "-y",
@@ -428,6 +429,8 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
             palette,
             "-filter_complex",
             "paletteuse=alpha_threshold=128",
+            "-loop",
+            "0",
             str(path),
         ]
         rg = subprocess.run(cmd_gif, capture_output=True, text=True)
@@ -516,6 +519,7 @@ def main() -> None:
     if not inp.is_file():
         raise SystemExit(f"input not found: {inp}")
 
+    print(f"[GIF FPS] process_video_pro: using gif_fps={args.gif_fps}, gif_width={args.gif_width}", flush=True)
     device = pick_device(args.device)
     print(f"[INFO] device={device}", flush=True)
 
@@ -706,6 +710,7 @@ def main() -> None:
     print(f"[DEBUG] GIF output path: {args.gif}", flush=True)
     print(f"[DEBUG] GIF dir exists: {os.path.exists(os.path.dirname(args.gif))}", flush=True)
     os.makedirs(os.path.dirname(args.gif), exist_ok=True)
+    print(f"[GIF FPS] calling frames_to_gif: fps={args.gif_fps}, source_video_fps={fps:.2f}, total_gif_frames={len(gif_src)}", flush=True)
     frames_to_gif(gif_src, Path(args.gif).resolve(), int(args.gif_fps), int(args.gif_width))
     print(f"[DONE] outputs under: {Path(args.gif).resolve().parent}", flush=True)
 

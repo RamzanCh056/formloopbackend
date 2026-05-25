@@ -33,6 +33,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -73,6 +74,93 @@ def _find_binary(name: str) -> str:
 
 _FFMPEG  = _find_binary("ffmpeg")
 _FFPROBE = _find_binary("ffprobe")
+
+
+def _probe_video_fps(data: bytes, suffix: str = ".mp4") -> int:
+    """Detect source video FPS via ffprobe. Caps at 24. Fallback: 12."""
+    if not suffix.startswith("."):
+        suffix = "." + suffix
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+            tf.write(data)
+            tmp = Path(tf.name)
+        try:
+            result = subprocess.run(
+                [_FFPROBE, "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=r_frame_rate",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(tmp)],
+                capture_output=True, text=True, timeout=15,
+            )
+            fps_str = result.stdout.strip().split("\n")[0].strip()
+            if "/" in fps_str:
+                num, den = fps_str.split("/", 1)
+                fps = float(num) / max(float(den), 1e-6)
+            else:
+                fps = float(fps_str)
+            return max(1, min(24, round(fps)))
+        finally:
+            tmp.unlink(missing_ok=True)
+    except Exception:
+        return 12
+
+
+def _apply_video_rotation(src_path: Path, rotation: int) -> Path:
+    """Return path to a rotated copy (new file) if rotation != 0, else src_path unchanged."""
+    rotation = int(rotation or 0)
+    if rotation not in (90, 180, 270):
+        return src_path
+    if rotation == 90:
+        vf = "transpose=1"
+    elif rotation == 180:
+        vf = "vflip,hflip"
+    else:  # 270
+        vf = "transpose=2"
+    out_path = src_path.with_name(src_path.stem + f"_rot{rotation}{src_path.suffix}")
+    subprocess.run(
+        [_FFMPEG, "-y", "-i", str(src_path), "-vf", vf,
+         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+         "-c:a", "copy", str(out_path)],
+        check=True, capture_output=True,
+    )
+    return out_path
+
+
+def _apply_reverse_loop(gif_path: Path) -> bool:
+    """Append reversed frames to gif_path in-place (boomerang / seamless loop).
+
+    Single-pass: split → reverse → concat, so no intermediate GIF encoding that
+    would lose transparency before the palette is rebuilt.
+    """
+    if not gif_path.is_file():
+        return False
+    tmp_out = gif_path.with_name(gif_path.stem + "_revout.gif")
+    try:
+        # Read the GIF once, split into two streams, reverse the second,
+        # concat forward+reverse, then rebuild a transparent palette.
+        fc = (
+            "[0:v]split[fwd][src];"
+            "[src]reverse[rev];"
+            "[fwd][rev]concat=n=2:v=1:a=0[cv];"
+            "[cv]split[s0][s1];"
+            "[s0]palettegen=reserve_transparent=1:transparency_color=000000[p];"
+            "[s1][p]paletteuse=dither=none:diff_mode=rectangle"
+        )
+        r = subprocess.run(
+            [_FFMPEG, "-y", "-i", str(gif_path),
+             "-filter_complex", fc, "-loop", "0", str(tmp_out)],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0 or not tmp_out.is_file():
+            return False
+        tmp_out.replace(gif_path)
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            tmp_out.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _load_env_file(path: Path) -> None:
@@ -368,6 +456,7 @@ def _run_pro_job(
     work: Path,
     *,
     gif_width: int,
+    gif_fps: int = 0,
     gif_white_bg: bool = False,
 ) -> None:
     """Runs process_video_pro (BiRefNet; optional YOLO via ``RVM_PRO_FAST_MODE``)."""
@@ -375,6 +464,8 @@ def _run_pro_job(
     alpha = work / "alpha.mp4"
     gif_out = work / "matte.gif"
     py = _python_for_inference(APP_ROOT.parent)
+    effective_fps = gif_fps if gif_fps > 0 else max(1, int(os.environ.get("RVM_PRO_GIF_FPS", "15")))
+    print(f"[GIF FPS] _run_pro_job: received gif_fps={gif_fps} → effective_fps={effective_fps} → --gif-fps={max(1, min(24, effective_fps))}", flush=True)
     cmd = [
         str(py),
         str(PROCESS_PRO_SCRIPT),
@@ -389,7 +480,7 @@ def _run_pro_job(
         "--gif-width",
         str(gif_width),
         "--gif-fps",
-        str(max(1, int(os.environ.get("RVM_PRO_GIF_FPS", "15")))),
+        str(max(1, min(24, effective_fps))),
         "--device",
         os.environ.get("RVM_DEVICE", _pick_device("auto")),
         "--dilation",
@@ -465,6 +556,8 @@ def _runpod_submit(
     gif_white_bg: bool = False,
     start_time: float | None = None,
     end_time: float | None = None,
+    rotation: int = 0,
+    loop_style: str = "normal",
 ) -> str:
     base = _runpod_base_url()
     if not base:
@@ -501,6 +594,16 @@ def _runpod_submit(
         print(f"[Trim] Video trimmed: {start_time}s to {end_time}s", flush=True)
         trimmed_size = os.path.getsize(src_path)
         print(f"[Trim] Original: {_original_size/1024:.0f}KB → Trimmed: {trimmed_size/1024:.0f}KB", flush=True)
+    if rotation:
+        try:
+            rotated = _apply_video_rotation(src_path, rotation)
+            if rotated != src_path:
+                src_path = rotated
+                with open(src_path, "rb") as f:
+                    raw = f.read()
+                print(f"[Rotation] Applied {rotation}° rotation", flush=True)
+        except Exception as exc:
+            _log.warning("Rotation failed (rotation=%s): %s — continuing without rotation", rotation, exc)
     try:
         from firebase_storage_admin import upload_runpod_input_video
 
@@ -521,8 +624,10 @@ def _runpod_submit(
             "gif_white_bg": bool(gif_white_bg),
             "start_time": float(start_time) if start_time else 0,
             "end_time": float(end_time) if end_time else None,
+            "loop_style": loop_style,
         }
     }
+    print(f"[RUNPOD] submitting: gif_fps={gif_fps} loop_style={loop_style} rotation={rotation}", flush=True)
     # Backward compatibility: older deployed RunPod handlers only read `input.video`.
     if len(raw) <= RUNPOD_MAX_RAW_VIDEO_BYTES:
         payload["input"]["video"] = base64.b64encode(raw).decode("utf-8")
@@ -896,6 +1001,7 @@ def _process_to_job_dir(
     no_premium: bool = False,
     model: str = "rvm",
     gif_white_bg: bool = False,
+    rotation: int = 0,
 ) -> dict[str, Path]:
     suffix = Path(filename or "upload.mp4").suffix.lower()
     if suffix not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
@@ -907,10 +1013,16 @@ def _process_to_job_dir(
     src.write_bytes(data)
     _assert_input_has_video(src)
 
+    if rotation:
+        try:
+            src = _apply_video_rotation(src, rotation)
+        except Exception as exc:
+            _log.warning("Rotation failed (rotation=%s): %s — continuing with original", rotation, exc)
+
     if model == "rembg":
         _run_rembg_job(src, work, gif_width=gif_width)
     elif model == "pro":
-        _run_pro_job(src, work, gif_width=gif_width, gif_white_bg=gif_white_bg)
+        _run_pro_job(src, work, gif_width=gif_width, gif_fps=gif_fps, gif_white_bg=gif_white_bg)
     else:
         device = os.environ.get("RVM_DEVICE", _pick_device("auto"))
         _run_matte_job(
@@ -1023,6 +1135,22 @@ async def formloop_brand_logo() -> FileResponse:
 
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 app.include_router(ui_router)
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap() -> FileResponse:
+    p = _static_dir / "sitemap.xml"
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="sitemap.xml not found")
+    return FileResponse(p, media_type="application/xml")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots() -> FileResponse:
+    p = _static_dir / "robots.txt"
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="robots.txt not found")
+    return FileResponse(p, media_type="text/plain")
 
 
 @app.post("/api/stripe/webhook")
@@ -1148,6 +1276,7 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
     export_id = _sanitize_export_id(str(payload.get("export_id") or ""))
     gif_remote = str(payload.get("gif_url") or "").strip() or None
     webm_remote = str(payload.get("webm_url") or "").strip() or None
+    platform = str(payload.get("platform") or "").strip() or None
 
     job_dir = OUTPUTS_DIR / job_id
     # Tiny on-disk job record (.owner, .saved); GIF/WebM for your library go to Firebase via URLs below.
@@ -1185,22 +1314,23 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
                 gif_path = job_dir / "matte.gif"
                 webm_path = job_dir / "matte_transparent.webm"
                 urls = None
-                # Primary path: push into Firebase Storage under users/{uid}/exports/{export_id}/ from the same URLs the UI shows.
-                if gif_remote and gif_remote.startswith(("http://", "https://")):
-                    urls = await asyncio.to_thread(
-                        upload_user_export_media_from_urls,
-                        uid=uid,
-                        export_id=export_id,
-                        gif_url=gif_remote,
-                        webm_url=webm_remote if webm_remote and webm_remote.startswith(("http://", "https://")) else None,
-                    )
-                elif gif_path.is_file():
+                # Prefer local file (watermarked) over remote URL to avoid self-fetch issues.
+                # Fall back to remote URL only when no local file is present (e.g. Firebase-only job).
+                if gif_path.is_file():
                     urls = await asyncio.to_thread(
                         upload_user_export_media,
                         uid=uid,
                         export_id=export_id,
                         gif_path=gif_path,
                         webm_path=webm_path if webm_path.is_file() else None,
+                    )
+                elif gif_remote and gif_remote.startswith(("http://", "https://")):
+                    urls = await asyncio.to_thread(
+                        upload_user_export_media_from_urls,
+                        uid=uid,
+                        export_id=export_id,
+                        gif_url=gif_remote,
+                        webm_url=webm_remote if webm_remote and webm_remote.startswith(("http://", "https://")) else None,
                     )
                 else:
                     out["storageError"] = (
@@ -1214,6 +1344,22 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
                     )
                     out["storageGifUrl"] = urls["gifUrl"]
                     out["storageWebmUrl"] = urls.get("webmUrl")
+                    # Write to Firestore so the library always shows this export
+                    try:
+                        from firebase_storage_admin import write_export_to_firestore
+                        write_export_to_firestore(
+                            uid=uid,
+                            export_id=export_id,
+                            job_id=job_id,
+                            gif_url=urls["gifUrl"],
+                            webm_url=urls.get("webmUrl"),
+                            platform=platform,
+                        )
+                    except Exception:
+                        _log.debug(
+                            "Firestore export write skipped job_id=%s export_id=%s",
+                            job_id, export_id, exc_info=True,
+                        )
         except Exception as exc:
             _log.exception("Firebase Storage upload failed job_id=%s export_id=%s", job_id, export_id)
             out["storageError"] = str(exc)
@@ -1235,6 +1381,8 @@ async def _run_job_async(
     uid: str | None,
     tier: str,
     gif_white_bg: bool = False,
+    rotation: int = 0,
+    loop_style: str = "normal",
 ) -> None:
     _set_job_state(job_id, status="queued", progress=0, message="Queued")
     async with PROCESS_SEMAPHORE:
@@ -1256,16 +1404,22 @@ async def _run_job_async(
                 no_premium=no_premium,
                 model=model,
                 gif_white_bg=gif_white_bg,
+                rotation=rotation,
             )
+            gif_path = OUTPUTS_DIR / job_id / "matte.gif"
+            if loop_style == "reverse" and gif_path.is_file():
+                ok = await asyncio.to_thread(_apply_reverse_loop, gif_path)
+                print(f"[REVERSE] _apply_reverse_loop result={ok} gif_exists={gif_path.is_file()}", flush=True)
             if uid:
                 try:
                     write_job_owner(job_id, uid)
                 except ValueError:
                     pass
                 increment_quota_usage(uid, billing_period_key_for_uid(uid))
+                print(f"[WATERMARK] tier={tier} exports_watermark={exports_watermark_for_tier(tier)} skip_wm={skip_wm} wm_check uid={uid}", flush=True)
                 if exports_watermark_for_tier(tier) and not skip_wm:
-                    gif_path = OUTPUTS_DIR / job_id / "matte.gif"
                     wm = resolve_watermark_png(APP_ROOT)
+                    print(f"[WATERMARK] wm={wm} gif_exists={gif_path.is_file()}", flush=True)
                     if wm and gif_path.is_file():
                         _set_job_state(
                             job_id,
@@ -1274,7 +1428,6 @@ async def _run_job_async(
                             status="running",
                         )
                         await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
-            gif_path = OUTPUTS_DIR / job_id / "matte.gif"
             if gif_path.is_file() and _gif_frame_count(gif_path) <= 1:
                 rebuilt = await asyncio.to_thread(_rebuild_transparent_gif_from_fg_alpha, OUTPUTS_DIR / job_id, gif_width)
                 if rebuilt and uid and exports_watermark_for_tier(tier) and not skip_wm:
@@ -1320,10 +1473,14 @@ async def _run_runpod_job_async(
     gif_width: int,
     gif_fps: int,
     public_base: str,
+    uid: str | None = None,
+    tier: str = "free",
     pro_fast_mode: bool | None = None,
     gif_white_bg: bool = False,
     start_time: float | None = None,
     end_time: float | None = None,
+    rotation: int = 0,
+    loop_style: str = "normal",
 ) -> None:
     _set_job_state(job_id, status="queued", progress=0, message="Queued for RunPod")
     try:
@@ -1339,6 +1496,8 @@ async def _run_runpod_job_async(
             gif_white_bg=gif_white_bg,
             start_time=start_time,
             end_time=end_time,
+            rotation=rotation,
+            loop_style=loop_style,
         )
         _set_job_state(job_id, status="running", progress=15, message="RunPod job accepted", runpod_job_id=run_id)
         payload = await asyncio.to_thread(_runpod_wait, run_id)
@@ -1363,6 +1522,7 @@ async def _run_runpod_job_async(
                     no_premium=True,
                     model="pro",
                     gif_white_bg=gif_white_bg,
+                    rotation=rotation,
                 )
                 body = _build_result_body(
                     public_base,
@@ -1372,6 +1532,14 @@ async def _run_runpod_job_async(
                     premium=False,
                     model="pro",
                 )
+                _fb1_gif = OUTPUTS_DIR / job_id / "matte.gif"
+                if loop_style == "reverse" and _fb1_gif.is_file():
+                    await asyncio.to_thread(_apply_reverse_loop, _fb1_gif)
+                _fb1_skip_wm = (os.environ.get("RVM_SKIP_GIF_WATERMARK") or "").strip().lower() in {"1", "true", "yes"}
+                if uid and exports_watermark_for_tier(tier) and not _fb1_skip_wm:
+                    wm = resolve_watermark_png(APP_ROOT)
+                    if wm and _fb1_gif.is_file():
+                        await asyncio.to_thread(apply_png_watermark_to_gif, _fb1_gif, wm)
                 body["message"] = "Completed locally after RunPod delay."
                 _set_job_state(
                     job_id,
@@ -1384,12 +1552,50 @@ async def _run_runpod_job_async(
             _set_job_state(job_id, status="failed", progress=100, message=msg, error=msg)
             return
         await asyncio.to_thread(_persist_runpod_job_artifacts, job_id, payload)
+
+        # Register owner and increment lifetime quota counter (bug fix: RunPod path was missing this)
+        if uid:
+            try:
+                write_job_owner(job_id, uid)
+            except ValueError:
+                pass
+            increment_quota_usage(uid, billing_period_key_for_uid(uid))
+
+        gif_path = OUTPUTS_DIR / job_id / "matte.gif"
+
+        # Apply reverse loop before watermark so watermark lands on the final frames
+        print(f"[REVERSE] loop_style={loop_style}", flush=True)
+        if loop_style == "reverse":
+            print(f"[REVERSE] gif_path={gif_path} exists={gif_path.is_file()}", flush=True)
+            if gif_path.is_file():
+                await asyncio.to_thread(_apply_reverse_loop, gif_path)
+            else:
+                print("[REVERSE] WARNING: matte.gif not found locally — reverse loop skipped", flush=True)
+
+        # Apply watermark for free-tier users
+        skip_wm = (os.environ.get("RVM_SKIP_GIF_WATERMARK") or "").strip().lower() in {"1", "true", "yes"}
+        print(f"[WATERMARK-CHECK] uid={uid} tier={tier} exports_wm={exports_watermark_for_tier(tier)} skip_wm={skip_wm} gif_exists={gif_path.is_file()}", flush=True)
+        if uid and exports_watermark_for_tier(tier) and not skip_wm and gif_path.is_file():
+            wm = resolve_watermark_png(APP_ROOT)
+            print(f"[WATERMARK-CHECK] wm={wm}", flush=True)
+            if wm:
+                print(f"[WATERMARK] Applying watermark for tier={tier}", flush=True)
+                await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
+
+        # Serve local URL when GIF is present (watermarked/reversed), Firebase URL otherwise
+        if gif_path.is_file():
+            result_body = _build_result_body(
+                public_base, job_id, gif_width=gif_width, effective_formats="gif", premium=False, model="pro"
+            )
+        else:
+            result_body = _runpod_output_to_body(job_id, payload)
+
         _set_job_state(
             job_id,
             status="completed",
             progress=100,
             message="Completed",
-            result=_runpod_output_to_body(job_id, payload),
+            result=result_body,
         )
     except Exception as exc:
         msg = str(exc)
@@ -1412,7 +1618,16 @@ async def _run_runpod_job_async(
                     no_premium=True,
                     model="pro",
                     gif_white_bg=gif_white_bg,
+                    rotation=rotation,
                 )
+                _fb2_gif = OUTPUTS_DIR / job_id / "matte.gif"
+                if loop_style == "reverse" and _fb2_gif.is_file():
+                    await asyncio.to_thread(_apply_reverse_loop, _fb2_gif)
+                _fb2_skip_wm = (os.environ.get("RVM_SKIP_GIF_WATERMARK") or "").strip().lower() in {"1", "true", "yes"}
+                if uid and exports_watermark_for_tier(tier) and not _fb2_skip_wm:
+                    wm = resolve_watermark_png(APP_ROOT)
+                    if wm and _fb2_gif.is_file():
+                        await asyncio.to_thread(apply_png_watermark_to_gif, _fb2_gif, wm)
                 body = _build_result_body(
                     public_base,
                     job_id,
@@ -1440,7 +1655,7 @@ async def matte_video_start(
     request: Request,
     file: UploadFile = File(..., description="Video file (MP4, MOV, etc.)"),
     gif_width: int = Query(960, ge=320, le=1280, description="GIF max width in px."),
-    gif_fps: int = Query(12, ge=1, le=30, description="GIF FPS (1-30)."),
+    gif_fps: int = Query(0, ge=0, le=30, description="GIF FPS (0 = auto-detect from source, capped at 24)."),
     fast_mode: bool = Query(True, description="True = BiRefNet fast mode on RunPod (no YOLO)."),
     transparent_formats: str = Query("gif", description="Comma-separated: gif, webp, apng."),
     premium: bool = Query(False, description="True = heavy premium pass."),
@@ -1451,6 +1666,8 @@ async def matte_video_start(
     ),
     start_time: float | None = Query(None, description="Trim start in seconds."),
     end_time: float | None = Query(None, description="Trim end in seconds."),
+    rotation: int = Query(0, ge=0, le=270, description="Clockwise rotation degrees (0, 90, 180, 270)."),
+    loop_style: str = Query("normal", description="Loop style: 'normal' or 'reverse' (boomerang)."),
 ) -> JSONResponse:
     if _runpod_only_mode() and not _runpod_enabled():
         raise HTTPException(
@@ -1472,6 +1689,18 @@ async def matte_video_start(
         )
     if len(raw) < 256:
         raise HTTPException(status_code=400, detail="Empty or too small file")
+
+    # Auto-detect source FPS and cap at 24; fall back to 12 if probe fails
+    suffix = Path(file.filename or "upload.mp4").suffix.lower()
+    if suffix not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
+        suffix = ".mp4"
+    if gif_fps <= 0:
+        gif_fps = await asyncio.to_thread(_probe_video_fps, raw, suffix)
+    print(f"[GIF FPS] matte_video_start: probed/requested gif_fps={gif_fps}", flush=True)
+
+    # Clamp rotation to valid values
+    rotation = rotation if rotation in (0, 90, 180, 270) else 0
+    loop_style = loop_style if loop_style in ("normal", "reverse") else "normal"
 
     await asyncio.to_thread(_prune_old_outputs)
 
@@ -1498,7 +1727,9 @@ async def matte_video_start(
             fast_mode = True
             if model == "pro":
                 gif_width = min(gif_width, RUNPOD_MAX_GIF_WIDTH)
-                gif_fps = min(gif_fps, RUNPOD_MAX_GIF_FPS)
+                # gif_fps is already probed from the source and capped at 24 — don't
+                # squash it further with RUNPOD_MAX_GIF_FPS (was 10, caused "too fast" GIFs).
+        print(f"[GIF FPS] sending to RunPod: gif_fps={gif_fps} loop_style={loop_style}", flush=True)
         public_base = _public_base_url(request)
         _set_job_state(job_id, status="queued", progress=0, message="Queued for RunPod")
         asyncio.create_task(
@@ -1509,10 +1740,14 @@ async def matte_video_start(
                 gif_width=gif_width,
                 gif_fps=gif_fps,
                 public_base=public_base,
+                uid=uid,
+                tier=tier,
                 pro_fast_mode=bool(fast_mode),
                 gif_white_bg=bool(gif_white_bg),
                 start_time=start_time,
                 end_time=end_time,
+                rotation=rotation,
+                loop_style=loop_style,
             )
         )
         return JSONResponse(
@@ -1541,6 +1776,8 @@ async def matte_video_start(
             uid=uid,
             tier=tier,
             gif_white_bg=bool(gif_white_bg),
+            rotation=rotation,
+            loop_style=loop_style,
         )
     )
     return JSONResponse(

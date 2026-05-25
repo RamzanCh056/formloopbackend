@@ -4,6 +4,49 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}FormLoop{% endblock %}</title>
+
+  <!-- Basic SEO -->
+  <meta name="description" content="Studio-grade background removal for fitness and sports content. Upload a clip, get a transparent GIF + WebM in seconds. No green screen needed.">
+  <meta name="keywords" content="transparent GIF, background removal, fitness GIF, sports content, transparent video, remove background, workout GIF">
+  <meta name="author" content="FormLoop">
+  <meta name="robots" content="index, follow">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="FormLoop — Transparent GIFs for Fitness & Sports">
+  <meta property="og:description" content="Studio-grade background removal. Upload a clip, get a transparent GIF + WebM in seconds. No green screen needed.">
+  <meta property="og:image" content="https://formloop.app/static/formloop-logo-transparent.png">
+  <meta property="og:url" content="https://formloop.app">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FormLoop">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="FormLoop — Transparent GIFs for Fitness & Sports">
+  <meta name="twitter:description" content="Studio-grade background removal. No green screen needed.">
+  <meta name="twitter:image" content="https://formloop.app/static/formloop-logo-transparent.png">
+
+  <!-- Schema.org JSON-LD -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "FormLoop",
+    "url": "https://formloop.app",
+    "description": "Studio-grade background removal for fitness and sports content. Create transparent GIFs and WebM videos in seconds.",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "Web",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "creator": {
+      "@type": "Organization",
+      "name": "FormLoop"
+    }
+  }
+  </script>
+
   <link rel="icon" type="image/png" href="/static/formloop-logo-transparent.png">
   <link rel="apple-touch-icon" href="/static/formloop-logo-transparent.png">
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -196,18 +239,19 @@
         </span>
         <span class="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-baseline sm:gap-x-2.5">
           <span class="text-[1.05rem] sm:text-xl font-bold tracking-tight text-white group-hover:text-zinc-50 transition">FormLoop</span>
-          <span class="text-[10px] sm:text-xs font-medium tracking-wide text-zinc-500 group-hover:text-zinc-400 transition sm:border-l sm:border-white/[0.08] sm:pl-2.5">Matte · GIF</span>
         </span>
       </a>
       <!-- Desktop nav links -->
       <div class="hidden md:flex flex-wrap items-center justify-end gap-0.5 sm:gap-1">
+        {% if request.session.get('user_id') %}
         <a href="/dashboard" class="text-xs sm:text-sm rounded-md sm:rounded-lg px-2 sm:px-2.5 py-1.5 transition-colors {% if nav_dash %}bg-indigo-500/20 text-white font-semibold ring-1 ring-indigo-400/35 shadow-sm shadow-indigo-500/10{% else %}font-medium text-zinc-400 hover:text-white hover:bg-white/[0.04]{% endif %}">Dashboard</a>
         <a href="/dashboard/gifs" class="text-xs sm:text-sm rounded-md sm:rounded-lg px-2 sm:px-2.5 py-1.5 transition-colors {% if nav_gifs %}bg-indigo-500/20 text-white font-semibold ring-1 ring-indigo-400/35 shadow-sm shadow-indigo-500/10{% else %}font-medium text-zinc-400 hover:text-white hover:bg-white/[0.04]{% endif %}">My GIFs</a>
+        {% endif %}
         <a href="/subscription" class="text-xs sm:text-sm rounded-md sm:rounded-lg px-2 sm:px-2.5 py-1.5 transition-colors {% if nav_subscription %}bg-indigo-500/20 text-white font-semibold ring-1 ring-indigo-400/35 shadow-sm shadow-indigo-500/10{% else %}font-medium text-zinc-400 hover:text-white hover:bg-white/[0.04]{% endif %}">Subscription</a>
-        <a href="/profile" class="text-xs sm:text-sm rounded-md sm:rounded-lg px-2 sm:px-2.5 py-1.5 transition-colors {% if nav_profile %}bg-indigo-500/20 text-white font-semibold ring-1 ring-indigo-400/35 shadow-sm shadow-indigo-500/10{% else %}font-medium text-zinc-400 hover:text-white hover:bg-white/[0.04]{% endif %}">Profile</a>
         {% if request.session.get('user_id') %}
+        <a href="/profile" class="text-xs sm:text-sm rounded-md sm:rounded-lg px-2 sm:px-2.5 py-1.5 transition-colors {% if nav_profile %}bg-indigo-500/20 text-white font-semibold ring-1 ring-indigo-400/35 shadow-sm shadow-indigo-500/10{% else %}font-medium text-zinc-400 hover:text-white hover:bg-white/[0.04]{% endif %}">Profile</a>
         <form action="/auth/logout" method="post" class="inline ml-0.5">
-          <button type="submit" class="text-xs sm:text-sm font-medium text-zinc-500 hover:text-rose-400 transition-colors rounded-md sm:rounded-lg px-2 sm:px-2.5 py-1.5 hover:bg-rose-500/5">Log out</button>
+          <button type="submit" onclick="return confirm('Are you sure you want to log out?')" class="text-xs sm:text-sm font-medium text-zinc-500 hover:text-rose-400 transition-colors rounded-md sm:rounded-lg px-2 sm:px-2.5 py-1.5 hover:bg-rose-500/5">Log out</button>
         </form>
         {% else %}
         <a href="/auth/signup" class="inline-flex items-center rounded-lg px-2 sm:px-2.5 py-1.5 text-xs sm:text-sm transition {% if nav_auth_signup %}bg-white/[0.07] hover:bg-white/[0.11] border border-white/[0.08] font-semibold text-white shadow-card{% else %}font-medium text-zinc-400 hover:text-white hover:bg-white/[0.04]{% endif %}">Sign up</a>
@@ -239,14 +283,16 @@
     </div>
     <!-- Drawer links -->
     <div style="flex:1;overflow-y:auto;padding:0.75rem;">
+      {% if request.session.get('user_id') %}
       <a href="/dashboard" style="display:flex;align-items:center;min-height:48px;border-radius:0.75rem;padding:0.75rem 1rem;font-size:0.9375rem;font-weight:500;text-decoration:none;transition:background 0.15s,color 0.15s;{% if nav_dash %}background:rgba(99,102,241,0.2);color:#fff;box-shadow:inset 0 0 0 1px rgba(129,140,248,0.35);{% else %}color:#d4d4d8;{% endif %}" onmouseover="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.06)'" onmouseout="if(!this.dataset.active)this.style.background='{% if nav_dash %}rgba(99,102,241,0.2){% else %}transparent{% endif %}'" {% if nav_dash %}data-active="1"{% endif %}>Dashboard</a>
       <a href="/dashboard/gifs" style="display:flex;align-items:center;min-height:48px;border-radius:0.75rem;padding:0.75rem 1rem;font-size:0.9375rem;font-weight:500;text-decoration:none;margin-top:0.25rem;transition:background 0.15s,color 0.15s;{% if nav_gifs %}background:rgba(99,102,241,0.2);color:#fff;box-shadow:inset 0 0 0 1px rgba(129,140,248,0.35);{% else %}color:#d4d4d8;{% endif %}" onmouseover="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.06)'" onmouseout="if(!this.dataset.active)this.style.background='{% if nav_gifs %}rgba(99,102,241,0.2){% else %}transparent{% endif %}'" {% if nav_gifs %}data-active="1"{% endif %}>My GIFs</a>
+      {% endif %}
       <a href="/subscription" style="display:flex;align-items:center;min-height:48px;border-radius:0.75rem;padding:0.75rem 1rem;font-size:0.9375rem;font-weight:500;text-decoration:none;margin-top:0.25rem;transition:background 0.15s,color 0.15s;{% if nav_subscription %}background:rgba(99,102,241,0.2);color:#fff;box-shadow:inset 0 0 0 1px rgba(129,140,248,0.35);{% else %}color:#d4d4d8;{% endif %}" onmouseover="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.06)'" onmouseout="if(!this.dataset.active)this.style.background='{% if nav_subscription %}rgba(99,102,241,0.2){% else %}transparent{% endif %}'" {% if nav_subscription %}data-active="1"{% endif %}>Subscription</a>
-      <a href="/profile" style="display:flex;align-items:center;min-height:48px;border-radius:0.75rem;padding:0.75rem 1rem;font-size:0.9375rem;font-weight:500;text-decoration:none;margin-top:0.25rem;transition:background 0.15s,color 0.15s;{% if nav_profile %}background:rgba(99,102,241,0.2);color:#fff;box-shadow:inset 0 0 0 1px rgba(129,140,248,0.35);{% else %}color:#d4d4d8;{% endif %}" onmouseover="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.06)'" onmouseout="if(!this.dataset.active)this.style.background='{% if nav_profile %}rgba(99,102,241,0.2){% else %}transparent{% endif %}'" {% if nav_profile %}data-active="1"{% endif %}>Profile</a>
       {% if request.session.get('user_id') %}
+      <a href="/profile" style="display:flex;align-items:center;min-height:48px;border-radius:0.75rem;padding:0.75rem 1rem;font-size:0.9375rem;font-weight:500;text-decoration:none;margin-top:0.25rem;transition:background 0.15s,color 0.15s;{% if nav_profile %}background:rgba(99,102,241,0.2);color:#fff;box-shadow:inset 0 0 0 1px rgba(129,140,248,0.35);{% else %}color:#d4d4d8;{% endif %}" onmouseover="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.06)'" onmouseout="if(!this.dataset.active)this.style.background='{% if nav_profile %}rgba(99,102,241,0.2){% else %}transparent{% endif %}'" {% if nav_profile %}data-active="1"{% endif %}>Profile</a>
       <div style="margin-top:0.25rem;">
         <form action="/auth/logout" method="post">
-          <button type="submit" style="display:flex;align-items:center;width:100%;min-height:48px;border-radius:0.75rem;padding:0.75rem 1rem;font-size:0.9375rem;font-weight:500;color:#f87171;background:transparent;border:none;cursor:pointer;text-align:left;transition:background 0.15s,color 0.15s;" onmouseover="this.style.background='rgba(239,68,68,0.08)';this.style.color='#fca5a5'" onmouseout="this.style.background='transparent';this.style.color='#f87171'">Log out</button>
+          <button type="submit" onclick="return confirm('Are you sure you want to log out?')" style="display:flex;align-items:center;width:100%;min-height:48px;border-radius:0.75rem;padding:0.75rem 1rem;font-size:0.9375rem;font-weight:500;color:#f87171;background:transparent;border:none;cursor:pointer;text-align:left;transition:background 0.15s,color 0.15s;" onmouseover="this.style.background='rgba(239,68,68,0.08)';this.style.color='#fca5a5'" onmouseout="this.style.background='transparent';this.style.color='#f87171'">Log out</button>
         </form>
       </div>
       {% else %}

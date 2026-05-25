@@ -173,13 +173,24 @@ def merge_billing(uid: str, **updates: Any) -> BillingState:
 _ACTIVE_SUB = frozenset({"active", "trialing"})
 
 
+_LAPSED_SUB = frozenset({"canceled", "unpaid", "incomplete_expired"})
+
+
 def effective_plan_tier(request: Request) -> str:
-    """Paid tier from persisted Stripe state wins over session."""
+    """Paid tier from persisted Stripe state wins over session.
+
+    Billing state takes precedence both ways:
+    - Active subscription → use billing tier (ignores stale session)
+    - Lapsed/canceled subscription → force free (ignores stale session)
+    """
     uid = (request.session.get("user_id") or "").strip()
     if uid:
         st = read_billing(uid)
-        if st and st.subscription_status in _ACTIVE_SUB and tier_is_paid(st.plan_tier):
-            return plan_tier_from_session({"plan_tier": st.plan_tier})
+        if st:
+            if st.subscription_status in _ACTIVE_SUB and tier_is_paid(st.plan_tier):
+                return plan_tier_from_session({"plan_tier": st.plan_tier})
+            if st.subscription_status in _LAPSED_SUB:
+                return "free"
     return plan_tier_from_session(dict(request.session))
 
 

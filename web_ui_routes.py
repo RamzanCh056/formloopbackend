@@ -95,6 +95,18 @@ def _establish_firebase_session(request: Request, claims: dict[str, Any], name: 
 _JOB_HEX = re.compile(r"^[0-9a-f]{32}$")
 router = APIRouter(tags=["ui"])
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+def _price_fmt(v) -> str:
+    """Render float prices without spurious .0 (e.g. 29.0 → '29', 23.2 → '23.2')."""
+    try:
+        f = float(v)
+        return str(int(f)) if f == int(f) else f"{f:g}"
+    except (TypeError, ValueError):
+        return str(v)
+
+templates.env.filters["price_fmt"] = _price_fmt
+
+
 def _public_base(request: Request) -> str:
     fixed = os.environ.get("RVM_PUBLIC_BASE_URL", "").strip().rstrip("/")
     if fixed:
@@ -195,20 +207,22 @@ def _user_gif_entries(request: Request, limit: int | None = None) -> list[dict]:
         return []
 
     # Primary: Firestore — survives Railway redeployments (ephemeral filesystem)
+    fs_rows: list[dict] = []
     try:
         from firebase_storage_admin import list_user_exports_from_firestore
-        fs_rows = list_user_exports_from_firestore(str(uid), limit=limit)
-        if fs_rows:
-            return fs_rows
+        fs_rows = list_user_exports_from_firestore(str(uid), limit=None)
     except Exception:
-        _log.debug("Firestore gif fetch skipped, falling back to local scan", exc_info=True)
+        _log.debug("Firestore gif fetch skipped", exc_info=True)
 
-    # Fallback: local api_outputs/ scan (local dev or non-Firebase envs)
+    seen: set[str] = {r["job_id"] for r in fs_rows}
+    items: list[dict] = list(fs_rows)
+
+    # Merge local api_outputs/ scan — catches recent saves not yet written to Firestore
     rows = list_matte_gifs_for_owner(str(uid))
-    items: list[dict] = []
-    seen: set[str] = set()
     for row in rows:
         jid = row["job_id"]
+        if jid in seen:
+            continue
         seen.add(jid)
         items.append(
             {
@@ -219,31 +233,28 @@ def _user_gif_entries(request: Request, limit: int | None = None) -> list[dict]:
             }
         )
     # Backward compatibility: older/manual jobs may miss `.owner`.
-    if limit is None or len(items) < limit:
-        if OUTPUTS_DIR.is_dir():
-            dirs = [p for p in OUTPUTS_DIR.iterdir() if p.is_dir() and _JOB_HEX.match(p.name)]
-            dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-            for p in dirs:
-                jid = p.name
-                if jid in seen:
-                    continue
-                if not (p / "matte.gif").is_file():
-                    continue
-                if not (p / ".saved").is_file():
-                    continue
-                if read_job_owner(p) is not None:
-                    continue
-                items.append(
-                    {
-                        "job_id": jid,
-                        "source_filename": None,
-                        "gif_url": _gif_url(request, jid),
-                        "webm_url": _webm_url(request, jid),
-                    }
-                )
-                seen.add(jid)
-                if limit is not None and len(items) >= limit:
-                    break
+    if OUTPUTS_DIR.is_dir():
+        dirs = [p for p in OUTPUTS_DIR.iterdir() if p.is_dir() and _JOB_HEX.match(p.name)]
+        dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in dirs:
+            jid = p.name
+            if jid in seen:
+                continue
+            if not (p / "matte.gif").is_file():
+                continue
+            if not (p / ".saved").is_file():
+                continue
+            if read_job_owner(p) is not None:
+                continue
+            items.append(
+                {
+                    "job_id": jid,
+                    "source_filename": None,
+                    "gif_url": _gif_url(request, jid),
+                    "webm_url": _webm_url(request, jid),
+                }
+            )
+            seen.add(jid)
     if limit is not None:
         items = items[:limit]
     return items

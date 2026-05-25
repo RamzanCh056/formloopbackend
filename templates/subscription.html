@@ -87,15 +87,15 @@
           <p class="mt-1.5 text-sm leading-relaxed text-zinc-500">{{ p.tagline }}</p>
           <div class="mt-5 border-t border-white/[0.06] pt-5">
             <p class="flex items-baseline gap-1">
-              <span class="text-3xl font-bold tabular-nums tracking-tight text-white">${{ p.monthly_usd }}</span>
+              <span class="text-3xl font-bold tabular-nums tracking-tight text-white">${{ p.monthly_usd | price_fmt }}</span>
               <span class="text-sm font-medium text-zinc-500">/mo</span>
             </p>
             <p class="mt-2 text-xs leading-relaxed text-zinc-600">
-              Yearly <span class="text-zinc-500">~${{ p.yearly_monthly_equiv }}/mo</span>
+              Yearly <span class="text-zinc-500">~${{ p.yearly_monthly_equiv | price_fmt }}/mo</span>
               {% if p.yearly_discount_pct and p.yearly_discount_pct > 0 %}
               <span class="text-emerald-500/90"> · {{ p.yearly_discount_pct }}% off</span>
               {% endif %}
-              <span class="text-zinc-600"> · ${{ p.yearly_total }}/yr</span>
+              <span class="text-zinc-600"> · ${{ p.yearly_total | price_fmt }}/yr</span>
             </p>
           </div>
           <ul class="mt-6 flex flex-1 flex-col gap-2.5">
@@ -115,10 +115,10 @@
             <form method="post" action="/subscription/checkout" class="space-y-2.5">
               <input type="hidden" name="plan" value="{{ p.key }}" />
               <button type="submit" name="billing" value="monthly" class="flex w-full items-center justify-center gap-1.5 rounded-xl py-3 text-xs font-bold transition {% if p.featured %}bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-500/25 ring-1 ring-white/10 hover:brightness-110{% else %}border border-white/[0.1] bg-white/[0.06] text-white hover:bg-white/[0.1]{% endif %}">
-                Monthly <span class="font-extrabold tabular-nums">${{ p.monthly_usd }}</span><span class="font-semibold opacity-90">/mo</span>
+                Monthly <span class="font-extrabold tabular-nums">${{ p.monthly_usd | price_fmt }}</span><span class="font-semibold opacity-90">/mo</span>
               </button>
               <button type="submit" name="billing" value="yearly" class="flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/[0.1] bg-white/[0.03] py-3 text-xs font-bold text-zinc-100 transition hover:border-white/[0.14] hover:bg-white/[0.06]">
-                Yearly <span class="font-extrabold tabular-nums">${{ p.yearly_total }}</span><span class="font-semibold text-zinc-400">/yr</span>
+                Yearly <span class="font-extrabold tabular-nums">${{ p.yearly_total | price_fmt }}</span><span class="font-semibold text-zinc-400">/yr</span>
               </button>
             </form>
             {% endif %}

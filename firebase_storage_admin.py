@@ -255,6 +255,8 @@ def list_user_exports_from_firestore(uid: str, limit: int | None = None) -> list
             job_id = (data.get("jobId") or "").strip()
             if not _JOB_HEX_RE.match(job_id):
                 continue  # skip exports missing a valid hex job_id
+            raw_tags = data.get("customTags") or []
+            tags = [str(t).strip() for t in raw_tags if str(t).strip()] if isinstance(raw_tags, list) else []
             rows.append({
                 "job_id": job_id,
                 "export_doc_id": snap.id,
@@ -262,14 +264,64 @@ def list_user_exports_from_firestore(uid: str, limit: int | None = None) -> list
                 "gif_url": gif_url,
                 "webm_url": (data.get("webmUrl") or "").strip() or None,
                 "created_at": (data.get("createdAt") or ""),
+                "tags": tags,
+                "platform": (data.get("platform") or "").strip() or None,
             })
-        rows.sort(key=lambda r: r["created_at"], reverse=True)
+        def _sort_ts(r) -> float:
+            v = r["created_at"]
+            if hasattr(v, "timestamp"):
+                return float(v.timestamp())
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return 0.0
+
+        rows.sort(key=_sort_ts, reverse=True)
         if limit is not None:
             rows = rows[:limit]
         return rows
     except Exception as exc:
         _log.warning("Firestore list_user_exports uid=%s: %s", uid, exc)
         return []
+
+
+def write_export_to_firestore(
+    *,
+    uid: str,
+    export_id: str,
+    job_id: str,
+    gif_url: str,
+    webm_url: str | None = None,
+    title: str | None = None,
+    platform: str | None = None,
+) -> bool:
+    """Write (or overwrite) a user's export document in Firestore users/{uid}/exports/{export_id}.
+
+    Returns True on success, False if Firebase is not configured or the write fails.
+    """
+    if not firebase_storage_ready():
+        return False
+    try:
+        from datetime import datetime, timezone
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        doc_data: dict = {
+            "jobId": job_id,
+            "gifUrl": gif_url,
+            "createdAt": datetime.now(timezone.utc),
+            "customTags": [],
+        }
+        if webm_url:
+            doc_data["webmUrl"] = webm_url
+        if title:
+            doc_data["title"] = title
+        if platform:
+            doc_data["platform"] = platform
+        db.collection("users").document(uid).collection("exports").document(export_id).set(doc_data)
+        return True
+    except Exception as exc:
+        _log.warning("write_export_to_firestore uid=%s export_id=%s: %s", uid, export_id, exc)
+        return False
 
 
 def delete_user_export_from_firestore(uid: str, job_id: str) -> bool:
