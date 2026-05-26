@@ -89,11 +89,35 @@ def price_id_from_product(product_id: str, *, yearly: bool) -> str | None:
     configure_stripe()
     want = "year" if yearly else "month"
     prices = stripe.Price.list(product=product_id, active=True, limit=30)
-    for pr in prices.data:
-        rec = pr.recurring
-        if rec and getattr(rec, "interval", None) == want:
+
+    # The subscription page renders a "$" prefix, so we must always pick the USD
+    # price even when a Product has additional-currency prices (e.g. PKR) attached.
+    # Stripe lists prices newest-first, so without filtering the latest-created
+    # non-USD price would win and the page would show the wrong number.
+    matches = [
+        pr for pr in prices.data
+        if pr.recurring and getattr(pr.recurring, "interval", None) == want
+    ]
+    if not matches:
+        return None
+
+    try:
+        prod = stripe.Product.retrieve(product_id)
+        default_price = getattr(prod, "default_price", None)
+        default_id = default_price if isinstance(default_price, str) else getattr(default_price, "id", None)
+    except Exception:
+        default_id = None
+
+    if default_id:
+        for pr in matches:
+            if pr.id == default_id:
+                return pr.id
+
+    for pr in matches:
+        if (getattr(pr, "currency", "") or "").lower() == "usd":
             return pr.id
-    return None
+
+    return matches[0].id
 
 
 def resolve_checkout_price_id(plan_key: str, yearly: bool) -> str | None:
@@ -112,6 +136,50 @@ def resolve_checkout_price_id(plan_key: str, yearly: bool) -> str | None:
         return None
 
 
+def _retrieve_usd_price_for_display(plan_key: str, yearly: bool) -> Any | None:
+    """Return a Stripe Price object in USD for the subscription page.
+
+    The page renders a "$" prefix, so we must skip any non-USD price (e.g. a
+    PKR add-on price on the same Product) regardless of whether the env-var
+    override or the product-based fallback resolved the ID.
+    """
+    pid = resolve_checkout_price_id(plan_key, yearly=yearly)
+    if pid:
+        try:
+            pr = stripe.Price.retrieve(pid)
+            if (getattr(pr, "currency", "") or "").lower() == "usd":
+                return pr
+        except Exception:
+            return None
+    prod = product_id_for_plan(plan_key, yearly)
+    if not prod:
+        return None
+    try:
+        prices = stripe.Price.list(product=prod, active=True, currency="usd", limit=30)
+    except Exception:
+        return None
+    want = "year" if yearly else "month"
+    usd_matches = [
+        pr for pr in prices.data
+        if pr.recurring
+        and getattr(pr.recurring, "interval", None) == want
+        and (getattr(pr, "currency", "") or "").lower() == "usd"
+    ]
+    if not usd_matches:
+        return None
+    try:
+        product = stripe.Product.retrieve(prod)
+        default_price = getattr(product, "default_price", None)
+        default_id = default_price if isinstance(default_price, str) else getattr(default_price, "id", None)
+        if default_id:
+            for pr in usd_matches:
+                if pr.id == default_id:
+                    return pr
+    except Exception:
+        pass
+    return usd_matches[0]
+
+
 def fetch_plan_display_prices(plan_key: str) -> dict[str, Any] | None:
     """Read monthly/yearly unit amounts from Stripe for the subscription page (no hardcoded dollars).
 
@@ -121,14 +189,12 @@ def fetch_plan_display_prices(plan_key: str) -> dict[str, Any] | None:
     if not (os.environ.get("STRIPE_SECRET_KEY") or "").strip():
         return None
     try:
-        mid = resolve_checkout_price_id(plan_key, yearly=False)
-        yid = resolve_checkout_price_id(plan_key, yearly=True)
-        if not mid or not yid:
-            return None
         configure_stripe()
-        pm = stripe.Price.retrieve(mid)
-        py = stripe.Price.retrieve(yid)
+        pm = _retrieve_usd_price_for_display(plan_key, yearly=False)
+        py = _retrieve_usd_price_for_display(plan_key, yearly=True)
     except Exception:
+        return None
+    if pm is None or py is None:
         return None
     u_m = getattr(pm, "unit_amount", None)
     u_y = getattr(py, "unit_amount", None)
@@ -152,6 +218,40 @@ def fetch_plan_display_prices(plan_key: str) -> dict[str, Any] | None:
     }
 
 
+def ensure_promotion_codes_for_coupons() -> None:
+    """Create a customer-facing Promotion Code for every Coupon that doesn't have one yet.
+
+    Stripe's `allow_promotion_codes` flag on Checkout only accepts ``PromotionCode``
+    strings — typing a raw Coupon name like ``FORM50`` fails with "This code is invalid"
+    unless a matching PromotionCode exists. Coupons in the Dashboard expose ``name``
+    (e.g. "FORM50") while their ``id`` is an opaque string like ``xb4LSntv``, so we
+    use the human ``name`` as the customer-facing code and fall back to ``id``.
+    """
+    try:
+        coupons = list(stripe.Coupon.list(limit=100).auto_paging_iter())
+    except Exception:
+        return
+    for coupon in coupons:
+        if not getattr(coupon, "valid", True):
+            continue
+        code_str = ((getattr(coupon, "name", "") or "").strip()
+                    or (getattr(coupon, "id", "") or "").strip())
+        if not code_str:
+            continue
+        try:
+            existing = stripe.PromotionCode.list(code=code_str, active=True, limit=1)
+            if existing.data:
+                continue
+            stripe.PromotionCode.create(
+                promotion={"type": "coupon", "coupon": coupon.id},
+                code=code_str,
+                active=True,
+            )
+        except Exception:
+            # Likely a code collision with a different coupon — skip silently.
+            continue
+
+
 def create_subscription_checkout_session(
     *,
     uid: str,
@@ -165,6 +265,8 @@ def create_subscription_checkout_session(
     price_id = resolve_checkout_price_id(plan_key, yearly=yearly)
     if not price_id:
         raise ValueError("No Stripe price for this plan — add recurring Prices to each Product or set STRIPE_PRICE_* env vars.")
+
+    ensure_promotion_codes_for_coupons()
 
     success = f"{public_base.rstrip('/')}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel = f"{public_base.rstrip('/')}/subscription?e=canceled"
