@@ -208,6 +208,25 @@ from output_job_store import (
     write_job_owner,
 )
 from user_billing import billing_period_key_for_uid, effective_plan_tier
+
+
+def _uid_from_bearer(request: Request) -> str | None:
+    """Extract Firebase uid from Authorization: Bearer <token> (for mobile clients)."""
+    auth = (request.headers.get("authorization") or "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    token = auth[7:].strip()
+    if not token:
+        return None
+    try:
+        from firebase_auth import verify_firebase_id_token
+        decoded = verify_firebase_id_token(token)
+        if isinstance(decoded, dict):
+            uid = (decoded.get("uid") or decoded.get("user_id") or "").strip()
+            return uid or None
+    except Exception:
+        pass
+    return None
 from process_video import _assert_input_has_video, _pick_device, _python_for_inference
 from web_ui_routes import SESSION_SECRET, router as ui_router
 
@@ -1263,6 +1282,10 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="invalid job_id")
     uid = (request.session.get("user_id") or "").strip()
     if not uid:
+        uid = (_uid_from_bearer(request) or "")
+        if uid:
+            request.session["user_id"] = uid  # persist Bearer-derived uid for subsequent requests
+    if not uid:
         raise HTTPException(status_code=401, detail="Sign in required to save this export.")
     payload: dict = {}
     ct = (request.headers.get("content-type") or "").lower()
@@ -1416,21 +1439,20 @@ async def _run_job_async(
                 except ValueError:
                     pass
                 increment_quota_usage(uid, billing_period_key_for_uid(uid))
-                print(f"[WATERMARK] tier={tier} exports_watermark={exports_watermark_for_tier(tier)} skip_wm={skip_wm} wm_check uid={uid}", flush=True)
-                if exports_watermark_for_tier(tier) and not skip_wm:
-                    wm = resolve_watermark_png(APP_ROOT)
-                    print(f"[WATERMARK] wm={wm} gif_exists={gif_path.is_file()}", flush=True)
-                    if wm and gif_path.is_file():
-                        _set_job_state(
-                            job_id,
-                            progress=96,
-                            message="Applying watermark (this can take a few minutes on long GIFs)",
-                            status="running",
-                        )
-                        await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
+            # Watermark applies to ALL free-tier users, including mobile (uid from Bearer token)
+            if exports_watermark_for_tier(tier) and not skip_wm:
+                wm = resolve_watermark_png(APP_ROOT)
+                if wm and gif_path.is_file():
+                    _set_job_state(
+                        job_id,
+                        progress=96,
+                        message="Applying watermark…",
+                        status="running",
+                    )
+                    await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
             if gif_path.is_file() and _gif_frame_count(gif_path) <= 1:
                 rebuilt = await asyncio.to_thread(_rebuild_transparent_gif_from_fg_alpha, OUTPUTS_DIR / job_id, gif_width)
-                if rebuilt and uid and exports_watermark_for_tier(tier) and not skip_wm:
+                if rebuilt and exports_watermark_for_tier(tier) and not skip_wm:
                     wm = resolve_watermark_png(APP_ROOT)
                     if wm:
                         await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
@@ -1572,14 +1594,12 @@ async def _run_runpod_job_async(
             else:
                 print("[REVERSE] WARNING: matte.gif not found locally — reverse loop skipped", flush=True)
 
-        # Apply watermark for free-tier users
+        # Apply watermark for all free-tier users (uid no longer required — mobile uses Bearer)
         skip_wm = (os.environ.get("RVM_SKIP_GIF_WATERMARK") or "").strip().lower() in {"1", "true", "yes"}
-        print(f"[WATERMARK-CHECK] uid={uid} tier={tier} exports_wm={exports_watermark_for_tier(tier)} skip_wm={skip_wm} gif_exists={gif_path.is_file()}", flush=True)
-        if uid and exports_watermark_for_tier(tier) and not skip_wm and gif_path.is_file():
+        if exports_watermark_for_tier(tier) and not skip_wm and gif_path.is_file():
             wm = resolve_watermark_png(APP_ROOT)
-            print(f"[WATERMARK-CHECK] wm={wm}", flush=True)
             if wm:
-                print(f"[WATERMARK] Applying watermark for tier={tier}", flush=True)
+                print(f"[WATERMARK] Applying watermark tier={tier}", flush=True)
                 await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
 
         # Serve local URL when GIF is present (watermarked/reversed), Firebase URL otherwise
@@ -1706,6 +1726,10 @@ async def matte_video_start(
 
     job_id = uuid.uuid4().hex
     uid = (request.session.get("user_id") or "").strip() or None
+    if not uid:
+        uid = _uid_from_bearer(request)
+        if uid:
+            request.session["user_id"] = uid  # persist Bearer-derived uid for subsequent requests
     tier = "free"
     if uid:
         request.session.setdefault("plan_tier", "free")
@@ -1884,6 +1908,10 @@ async def matte_video(
 
     job_id = uuid.uuid4().hex
     uid = (request.session.get("user_id") or "").strip() or None
+    if not uid:
+        uid = _uid_from_bearer(request)
+        if uid:
+            request.session["user_id"] = uid  # persist Bearer-derived uid for subsequent requests
     tier = "free"
     if uid:
         request.session.setdefault("plan_tier", "free")
@@ -1978,15 +2006,15 @@ async def matte_video(
         except ValueError:
             pass
         increment_quota_usage(uid, billing_period_key_for_uid(uid))
-        if exports_watermark_for_tier(tier) and not skip_wm:
-            gif_path = OUTPUTS_DIR / job_id / "matte.gif"
-            wm = resolve_watermark_png(APP_ROOT)
-            if wm and gif_path.is_file():
-                await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
+    # Watermark applies to all free-tier users (uid not required — mobile uses Bearer token)
     gif_path = OUTPUTS_DIR / job_id / "matte.gif"
+    if exports_watermark_for_tier(tier) and not skip_wm:
+        wm = resolve_watermark_png(APP_ROOT)
+        if wm and gif_path.is_file():
+            await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
     if gif_path.is_file() and _gif_frame_count(gif_path) <= 1:
         rebuilt = await asyncio.to_thread(_rebuild_transparent_gif_from_fg_alpha, OUTPUTS_DIR / job_id, gif_width)
-        if rebuilt and uid and exports_watermark_for_tier(tier) and not skip_wm:
+        if rebuilt and exports_watermark_for_tier(tier) and not skip_wm:
             wm = resolve_watermark_png(APP_ROOT)
             if wm:
                 await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)

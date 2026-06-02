@@ -82,11 +82,21 @@ def apply_png_watermark_to_gif(gif_path: Path, watermark_png: Path) -> bool:
     if not gif_path.is_file() or not watermark_png.is_file():
         return False
     tmp = gif_path.with_suffix(".wm.gif")
-    # Keep full GIF animation. Do NOT use shortest=1 here; watermark input is a single PNG frame.
-    # 180px wide, bottom-right corner with 14px margin.
+
+    # Scale watermark to 28% of GIF width (minimum 240px) so it's clearly visible
+    # on both landscape and tall portrait GIFs.
+    gif_w = 960
+    try:
+        from PIL import Image as _PILImg
+        with _PILImg.open(str(gif_path)) as _im:
+            gif_w = _im.width
+    except Exception:
+        pass
+    wm_w = max(240, int(gif_w * 0.28))
+
     # palettegen reserve_transparent=1 is required to keep GIF transparency intact.
     flt = (
-        "[1:v]format=rgba,scale=220:-1[wm];"
+        f"[1:v]format=rgba,scale={wm_w}:-1[wm];"
         "[0:v][wm]overlay=W-w-14:14[overlaid];"
         "[overlaid]split[a][b];"
         "[a]palettegen=reserve_transparent=1:transparency_color=000000[pal];"
@@ -111,7 +121,8 @@ def apply_png_watermark_to_gif(gif_path: Path, watermark_png: Path) -> bool:
         str(tmp),
     ]
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        _ = result  # suppress unused-variable warning
     except subprocess.CalledProcessError as exc:
         print(f"[WATERMARK] FFmpeg failed rc={exc.returncode}\nSTDERR: {exc.stderr[-2000:]}", flush=True)
         if tmp.is_file():
