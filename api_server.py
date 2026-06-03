@@ -1276,6 +1276,31 @@ def _sanitize_export_id(raw: str) -> str:
     return cleaned if _EXPORT_ID_RE.match(cleaned) else ""
 
 
+@app.get("/api/v1/quota")
+async def get_quota(request: Request) -> JSONResponse:
+    """Return current quota usage for the signed-in user.
+    Accepts session cookie (web) or Authorization: Bearer <token> (mobile).
+    Response: {"uid": "...", "used": N, "cap": N|null, "tier": "free"|"pro", "exceeded": bool}
+    """
+    uid = (request.session.get("user_id") or "").strip() or None
+    if not uid:
+        uid = _uid_from_bearer(request)
+        if uid:
+            request.session["user_id"] = uid
+    if not uid:
+        raise HTTPException(status_code=401, detail="Sign in required.")
+    tier = effective_plan_tier(request) if uid else "free"
+    cap = gif_limit_for_tier(tier)
+    used = read_quota_usage(uid, billing_period_key_for_uid(uid)) if uid else 0
+    return JSONResponse({
+        "uid": uid,
+        "used": used,
+        "cap": cap,
+        "tier": tier,
+        "exceeded": (cap is not None and used >= cap) if _quota_enforced() else False,
+    })
+
+
 @app.post("/api/v1/matte/save/{job_id}")
 async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
     if not _JOB_ID_RE.match(job_id):
