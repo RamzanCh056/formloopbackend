@@ -1281,8 +1281,10 @@ async def get_quota(request: Request) -> JSONResponse:
     """Return current quota usage for the signed-in user.
     Accepts session cookie (web) or Authorization: Bearer <token> (mobile).
     Response: {"uid": "...", "used": N, "cap": N|null, "tier": "free"|"pro", "exceeded": bool}
-    Counts actual saved exports from Firestore so the value matches what
-    the user sees in their profile, regardless of the local counter file.
+
+    Takes the higher of two sources so neither stale nor missing data hides real usage:
+      - Firestore users/{uid}/exports count (matches profile view)
+      - Local counter file incremented on every completed job
     """
     uid = (request.session.get("user_id") or "").strip() or None
     if not uid:
@@ -1295,7 +1297,9 @@ async def get_quota(request: Request) -> JSONResponse:
     cap = gif_limit_for_tier(tier)
     from firebase_storage_admin import list_user_exports_from_firestore
     exports = await asyncio.to_thread(list_user_exports_from_firestore, uid)
-    used = len(exports)
+    firestore_count = len(exports)
+    local_count = read_quota_usage(uid, billing_period_key_for_uid(uid))
+    used = max(firestore_count, local_count)
     exceeded = (cap is not None and used >= cap) if _quota_enforced() else False
     return JSONResponse({
         "uid": uid,
