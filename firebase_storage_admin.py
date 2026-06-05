@@ -357,3 +357,34 @@ def upload_runpod_input_video(*, job_id: str, filename: str, local_path: Path) -
     content_type = guessed or "video/mp4"
     object_path = f"runpod-inputs/{job_id}/{safe_name}"
     return _upload_file(local_path, object_path, content_type)
+
+
+def get_quota_counter_from_firestore(uid: str) -> int:
+    """Return the quota_used counter stored on the user's Firestore document."""
+    if not firebase_storage_ready():
+        return 0
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        doc = db.collection("users").document(uid).get()
+        if doc.exists:
+            return int(doc.to_dict().get("quota_used", 0))
+        return 0
+    except Exception:
+        return 0
+
+
+def increment_quota_counter_in_firestore(uid: str) -> None:
+    """Atomically increment the quota_used counter on the user's Firestore document."""
+    if not firebase_storage_ready():
+        return
+    try:
+        from firebase_admin import firestore as _fs
+        from google.cloud.firestore_v1 import Increment
+        db = _fs.client()
+        db.collection("users").document(uid).set(
+            {"quota_used": Increment(1)},
+            merge=True,
+        )
+    except Exception:
+        pass
