@@ -601,15 +601,256 @@
       </span>
     </div>
 
-    <!-- ── CTA ───────────────────────────────────────────────── -->
-    <div class="mt-8 flex flex-col items-center gap-2.5 px-4">
-      <a href="/auth/signup"
-         class="group inline-flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 px-6 py-3 text-sm font-semibold text-white shadow-[0_4px_20px_-4px_rgba(99,102,241,0.5)] hover:shadow-[0_4px_24px_-4px_rgba(99,102,241,0.7)] transition-all duration-200">
-        Start free
-        <svg class="h-4 w-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-      </a>
+    <!-- ════════════════════════════════════════════════════════════
+         SECTION 1 — Workout Screens
+         ════════════════════════════════════════════════════════════ -->
+    <div class="relative mt-16 sm:mt-24 border-t border-white/[0.06]">
+      <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-500/30 to-transparent"></div>
+      <!-- Subtle section background glow -->
+      <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_60%_at_70%_50%,rgba(79,70,229,0.07),transparent)]"></div>
+      <div class="relative mx-auto max-w-5xl px-4 sm:px-8 pt-16 pb-16 sm:pt-20 sm:pb-20">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:gap-16">
+          <!-- Text -->
+          <div class="sm:flex-1 min-w-0">
+            <p class="text-[10px] font-semibold tracking-[0.22em] text-indigo-400 uppercase mb-4">Fitness studios &nbsp;·&nbsp; HIIT &nbsp;·&nbsp; Strength</p>
+            <h3 class="text-[2rem] sm:text-[2.6rem] font-bold tracking-[-0.03em] leading-[1.15] text-white mb-5">
+              Your screens. Your coaches.<br class="hidden sm:block"> Your brand.
+            </h3>
+            <p class="text-[0.9rem] text-zinc-400 leading-relaxed max-w-md">
+              Drop branded, background-free exercise demos directly onto your HIIT and strength class screens.
+              No generic stock footage. No borrowed brand. Just your instructors, your gear, and your identity — on every screen, at every location.
+            </p>
+          </div>
+          <!-- TV / Gym screen mockup -->
+          <div class="hidden sm:block sm:shrink-0 mt-8 sm:mt-0">
+            <div class="group relative" style="width:300px">
+              <!-- Outer glow blob -->
+              <div class="pointer-events-none absolute -inset-6 rounded-[2.5rem] bg-indigo-600/20 blur-3xl group-hover:bg-indigo-600/30 transition-all duration-700"></div>
+              <!-- Monitor frame -->
+              <div class="relative rounded-2xl overflow-hidden border border-indigo-500/25 shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_24px_60px_-12px_rgba(79,70,229,0.4)]"
+                   style="background:linear-gradient(160deg,#1e1b4b 0%,#0d0f1f 60%,#0a1628 100%)">
+                <!-- Window chrome bar -->
+                <div class="flex items-center gap-1.5 px-3.5 py-2.5 border-b border-white/[0.07]" style="background:rgba(0,0,0,0.35)">
+                  <span class="h-2 w-2 rounded-full bg-rose-500/55"></span>
+                  <span class="h-2 w-2 rounded-full bg-amber-500/45"></span>
+                  <span class="h-2 w-2 rounded-full bg-emerald-500/45"></span>
+                  <span class="ml-auto text-[9px] text-indigo-400/50 font-semibold tracking-widest uppercase">GYM SCREEN · LIVE</span>
+                </div>
+                <!-- Screen area 16:10 -->
+                <div class="relative overflow-hidden" style="aspect-ratio:16/10">
+                  <!-- Gym scene gradient background -->
+                  <div class="absolute inset-0" style="background:linear-gradient(135deg,#0f0c29 0%,#111827 50%,#0c1a2e 100%)"></div>
+                  <!-- Subtle grid lines suggesting a screen overlay -->
+                  <div class="absolute inset-0 opacity-[0.04]" style="background-image:linear-gradient(rgba(255,255,255,0.5) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.5) 1px,transparent 1px);background-size:30px 30px"></div>
+                  <!-- Brand watermark top-left -->
+                  <div class="absolute top-3 left-3 z-10 text-[8px] font-bold tracking-[0.2em] text-indigo-300/40 uppercase">FORMLOOP STUDIO</div>
+                  <!-- Class name top-right -->
+                  <div class="absolute top-3 right-3 z-10 rounded-full border border-indigo-400/20 bg-black/40 px-2 py-[3px] text-[8px] font-semibold text-indigo-300/60 tracking-wide">HIIT · 45 MIN</div>
+                  <!-- Transparent GIF centred on screen -->
+                  <div class="absolute inset-x-0 top-8 bottom-8 flex items-center justify-center">
+                    <div class="relative w-full h-full"
+                         style="background-image:linear-gradient(45deg,#1a1a2e 25%,transparent 25%),linear-gradient(-45deg,#1a1a2e 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#1a1a2e 75%),linear-gradient(-45deg,transparent 75%,#1a1a2e 75%);background-size:10px 10px;background-position:0 0,0 5px,5px -5px,-5px 0;background-color:#0d0d14;">
+                      <img src="/static/library.gif" alt="Transparent exercise GIF" class="w-full h-full object-contain" />
+                    </div>
+                  </div>
+                  <!-- Bottom status bar -->
+                  <div class="absolute bottom-0 inset-x-0 flex items-center justify-between px-3 py-1.5" style="background:rgba(0,0,0,0.5)">
+                    <span class="text-[8px] text-zinc-500 font-medium">Coach: Alex Rivera</span>
+                    <span class="inline-flex items-center gap-1 text-[8px] text-emerald-400/70 font-semibold">
+                      <span class="h-1.5 w-1.5 rounded-full bg-emerald-400/70"></span>LIVE
+                    </span>
+                  </div>
+                </div>
+                <!-- TV stand base -->
+                <div class="flex flex-col items-center py-3 gap-1" style="background:rgba(0,0,0,0.25)">
+                  <div class="w-12 h-[3px] rounded-full bg-white/10"></div>
+                  <div class="w-20 h-[3px] rounded-full bg-white/[0.06]"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════
+         SECTION 2 — Pilates & Yoga
+         ════════════════════════════════════════════════════════════ -->
+    <div class="relative border-t border-white/[0.06]">
+      <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet-500/25 to-transparent"></div>
+      <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_60%_at_30%_50%,rgba(109,40,217,0.07),transparent)]"></div>
+      <div class="relative mx-auto max-w-5xl px-4 sm:px-8 pt-16 pb-16 sm:pt-20 sm:pb-20">
+        <div class="flex flex-col sm:flex-row-reverse sm:items-center sm:gap-16">
+          <!-- Text -->
+          <div class="sm:flex-1 min-w-0">
+            <p class="text-[10px] font-semibold tracking-[0.22em] text-violet-400 uppercase mb-4">Pilates &nbsp;·&nbsp; Yoga &nbsp;·&nbsp; Studio materials</p>
+            <h3 class="text-[2rem] sm:text-[2.6rem] font-bold tracking-[-0.03em] leading-[1.15] text-white mb-5">
+              Professional visuals for every manual,<br class="hidden sm:block"> guide, and class resource.
+            </h3>
+            <p class="text-[0.9rem] text-zinc-400 leading-relaxed max-w-md">
+              Create clean, transparent exercise images for your Pilates and yoga materials.
+              Drop them into digital manuals, member handbooks, and training guides that look as polished as your studio.
+            </p>
+          </div>
+          <!-- Document / manual mockup -->
+          <div class="hidden sm:block sm:shrink-0 mt-8 sm:mt-0">
+            <div class="group relative" style="width:260px">
+              <!-- Outer glow blob -->
+              <div class="pointer-events-none absolute -inset-6 rounded-[2.5rem] bg-violet-600/18 blur-3xl group-hover:bg-violet-600/28 transition-all duration-700"></div>
+              <!-- Document card -->
+              <div class="relative rounded-2xl overflow-hidden border border-violet-500/20 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_24px_60px_-12px_rgba(139,92,246,0.35)]"
+                   style="background:linear-gradient(160deg,#1a0f2e 0%,#0d0a1a 60%,#100d20 100%)">
+                <!-- Doc header bar -->
+                <div class="flex items-center justify-between px-4 py-3 border-b border-white/[0.07]" style="background:rgba(139,92,246,0.08)">
+                  <div class="flex items-center gap-2">
+                    <div class="h-4 w-4 rounded bg-violet-500/30 flex items-center justify-center">
+                      <svg class="h-2.5 w-2.5 text-violet-300/80" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/></svg>
+                    </div>
+                    <span class="text-[9px] font-bold text-violet-300/70 uppercase tracking-widest">Studio Manual</span>
+                  </div>
+                  <span class="text-[8px] text-zinc-600">p. 12</span>
+                </div>
+                <!-- Document body -->
+                <div class="p-4 space-y-3">
+                  <!-- Section heading text line -->
+                  <div class="space-y-1.5">
+                    <div class="h-[7px] rounded-full bg-white/20 w-3/4"></div>
+                    <div class="h-[5px] rounded-full bg-white/[0.07] w-full"></div>
+                    <div class="h-[5px] rounded-full bg-white/[0.07] w-5/6"></div>
+                  </div>
+                  <!-- Exercise image with transparency -->
+                  <div class="rounded-xl overflow-hidden border border-violet-500/15 ring-1 ring-white/[0.04]"
+                       style="aspect-ratio:4/3;background-image:linear-gradient(45deg,#1a1a2e 25%,transparent 25%),linear-gradient(-45deg,#1a1a2e 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#1a1a2e 75%),linear-gradient(-45deg,transparent 75%,#1a1a2e 75%);background-size:10px 10px;background-position:0 0,0 5px,5px -5px,-5px 0;background-color:#0d0d14;">
+                    <img src="/static/demo.gif" alt="Transparent exercise visual" class="w-full h-full object-contain" />
+                  </div>
+                  <!-- Caption lines -->
+                  <div class="space-y-1">
+                    <div class="h-[5px] rounded-full bg-white/[0.08] w-full"></div>
+                    <div class="h-[5px] rounded-full bg-white/[0.05] w-4/5"></div>
+                    <div class="h-[5px] rounded-full bg-white/[0.05] w-3/5"></div>
+                  </div>
+                  <!-- Tags -->
+                  <div class="flex flex-wrap gap-1.5 pt-0.5">
+                    <span class="text-[8px] px-2 py-[3px] rounded-full font-semibold" style="background:rgba(139,92,246,0.2);color:rgba(196,181,253,0.9)">Pilates</span>
+                    <span class="text-[8px] px-2 py-[3px] rounded-full bg-white/[0.05] text-zinc-500 font-medium">Core</span>
+                    <span class="text-[8px] px-2 py-[3px] rounded-full bg-white/[0.05] text-zinc-500 font-medium">Level 2</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════
+         SECTION 3 — Your Library
+         ════════════════════════════════════════════════════════════ -->
+    <div class="relative border-t border-white/[0.06]">
+      <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-500/25 to-transparent"></div>
+      <div class="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_60%_at_70%_50%,rgba(6,182,212,0.06),transparent)]"></div>
+      <div class="relative mx-auto max-w-5xl px-4 sm:px-8 pt-16 pb-16 sm:pt-20 sm:pb-20">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:gap-16">
+          <!-- Text -->
+          <div class="sm:flex-1 min-w-0">
+            <p class="text-[10px] font-semibold tracking-[0.22em] text-cyan-400 uppercase mb-4">Content library &nbsp;·&nbsp; Organisation &nbsp;·&nbsp; Scale</p>
+            <h3 class="text-[2rem] sm:text-[2.6rem] font-bold tracking-[-0.03em] leading-[1.15] text-white mb-5">
+              Build a content library<br class="hidden sm:block"> that's 100% yours.
+            </h3>
+            <p class="text-[0.9rem] text-zinc-400 leading-relaxed max-w-md">
+              Upload your instructors. Tag your exercises. Organise by equipment, movement, or class type.
+              Formloop builds you a branded media database — unique to your studio, ready to use anywhere.
+            </p>
+          </div>
+          <!-- Library grid mockup -->
+          <div class="hidden sm:block sm:shrink-0 mt-8 sm:mt-0">
+            <div class="group relative" style="width:280px">
+              <!-- Outer glow blob -->
+              <div class="pointer-events-none absolute -inset-6 rounded-[2.5rem] bg-cyan-500/15 blur-3xl group-hover:bg-cyan-500/25 transition-all duration-700"></div>
+              <!-- Library card -->
+              <div class="relative rounded-2xl overflow-hidden border border-cyan-500/20 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_24px_60px_-12px_rgba(6,182,212,0.3)]"
+                   style="background:linear-gradient(160deg,#041a1f 0%,#060d14 60%,#050e0e 100%)">
+                <!-- Library header bar -->
+                <div class="flex items-center justify-between px-4 py-3 border-b border-white/[0.07]" style="background:rgba(6,182,212,0.07)">
+                  <div class="flex items-center gap-2">
+                    <div class="h-4 w-4 rounded bg-cyan-500/25 flex items-center justify-center">
+                      <svg class="h-2.5 w-2.5 text-cyan-300/80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                    </div>
+                    <span class="text-[9px] font-bold text-cyan-300/70 uppercase tracking-widest">My Library</span>
+                  </div>
+                  <span class="text-[8px] text-zinc-600 font-medium">24 exports</span>
+                </div>
+                <!-- 2 × 2 grid of thumbnails -->
+                <div class="p-3 grid grid-cols-2 gap-2">
+                  <!-- Card 1 -->
+                  <div class="group/card relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-cyan-500/30 transition-colors duration-200"
+                       style="aspect-ratio:1;background-image:linear-gradient(45deg,#1a1a2e 25%,transparent 25%),linear-gradient(-45deg,#1a1a2e 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#1a1a2e 75%),linear-gradient(-45deg,transparent 75%,#1a1a2e 75%);background-size:10px 10px;background-position:0 0,0 5px,5px -5px,-5px 0;background-color:#0d0d14;">
+                    <img src="/static/library.gif" alt="GIF 1" class="w-full h-full object-contain" />
+                    <div class="absolute bottom-0 inset-x-0 px-1.5 py-1" style="background:linear-gradient(to top,rgba(0,0,0,0.7),transparent)">
+                      <span class="text-[7px] text-white/60 font-semibold">Squat</span>
+                    </div>
+                  </div>
+                  <!-- Card 2 -->
+                  <div class="group/card relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-cyan-500/30 transition-colors duration-200"
+                       style="aspect-ratio:1;background-image:linear-gradient(45deg,#1a1a2e 25%,transparent 25%),linear-gradient(-45deg,#1a1a2e 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#1a1a2e 75%),linear-gradient(-45deg,transparent 75%,#1a1a2e 75%);background-size:10px 10px;background-position:0 0,0 5px,5px -5px,-5px 0;background-color:#0d0d14;">
+                    <img src="/static/librarymore.gif" alt="GIF 2" class="w-full h-full object-contain" />
+                    <div class="absolute bottom-0 inset-x-0 px-1.5 py-1" style="background:linear-gradient(to top,rgba(0,0,0,0.7),transparent)">
+                      <span class="text-[7px] text-white/60 font-semibold">Lunge</span>
+                    </div>
+                  </div>
+                  <!-- Card 3 -->
+                  <div class="group/card relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-cyan-500/30 transition-colors duration-200"
+                       style="aspect-ratio:1;background-image:linear-gradient(45deg,#1a1a2e 25%,transparent 25%),linear-gradient(-45deg,#1a1a2e 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#1a1a2e 75%),linear-gradient(-45deg,transparent 75%,#1a1a2e 75%);background-size:10px 10px;background-position:0 0,0 5px,5px -5px,-5px 0;background-color:#0d0d14;">
+                    <img src="/static/demo.gif" alt="GIF 3" class="w-full h-full object-contain" />
+                    <div class="absolute bottom-0 inset-x-0 px-1.5 py-1" style="background:linear-gradient(to top,rgba(0,0,0,0.7),transparent)">
+                      <span class="text-[7px] text-white/60 font-semibold">Deadlift</span>
+                    </div>
+                  </div>
+                  <!-- Card 4 -->
+                  <div class="group/card relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-cyan-500/30 transition-colors duration-200"
+                       style="aspect-ratio:1;background-image:linear-gradient(45deg,#1a1a2e 25%,transparent 25%),linear-gradient(-45deg,#1a1a2e 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#1a1a2e 75%),linear-gradient(-45deg,transparent 75%,#1a1a2e 75%);background-size:10px 10px;background-position:0 0,0 5px,5px -5px,-5px 0;background-color:#0d0d14;">
+                    <img src="/static/library.gif" alt="GIF 4" class="w-full h-full object-contain" />
+                    <div class="absolute bottom-0 inset-x-0 px-1.5 py-1" style="background:linear-gradient(to top,rgba(0,0,0,0.7),transparent)">
+                      <span class="text-[7px] text-white/60 font-semibold">Press</span>
+                    </div>
+                  </div>
+                </div>
+                <!-- Library footer with tags -->
+                <div class="flex flex-wrap gap-1.5 px-3 pb-3">
+                  <span class="text-[7px] px-2 py-[3px] rounded-full font-semibold" style="background:rgba(6,182,212,0.18);color:rgba(103,232,249,0.9)">Strength</span>
+                  <span class="text-[7px] px-2 py-[3px] rounded-full bg-white/[0.05] text-zinc-500 font-medium">HIIT</span>
+                  <span class="text-[7px] px-2 py-[3px] rounded-full bg-white/[0.05] text-zinc-500 font-medium">Mobility</span>
+                  <span class="text-[7px] px-2 py-[3px] rounded-full bg-white/[0.05] text-zinc-600 font-medium">+18</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════
+         CLOSING CTA
+         ════════════════════════════════════════════════════════════ -->
+    <div class="relative mt-2 border-t border-white/[0.06]">
+      <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
+      <!-- Soft glow -->
+      <div class="pointer-events-none absolute inset-x-0 top-0 h-56 bg-[radial-gradient(ellipse_60%_100%_at_50%_0%,rgba(99,102,241,0.1),transparent)]"></div>
+      <div class="relative mx-auto max-w-2xl px-4 sm:px-6 pt-16 pb-16 sm:pt-20 sm:pb-20 text-center">
+        <h3 class="text-[1.75rem] sm:text-[2.2rem] font-bold tracking-[-0.03em] leading-[1.18] text-white mb-4">
+          One tool. Every screen.<br class="hidden sm:block"> Every studio.
+        </h3>
+        <p class="text-sm text-zinc-500 mb-8 leading-relaxed">
+          5 free GIFs to start. No credit card required.
+        </p>
+        <a href="/auth/signup"
+           class="group inline-flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 px-7 py-3.5 text-sm font-semibold text-white shadow-[0_4px_24px_-4px_rgba(99,102,241,0.55)] hover:shadow-[0_4px_28px_-4px_rgba(99,102,241,0.75)] transition-all duration-200">
+          Start free
+          <svg class="h-4 w-4 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+          </svg>
+        </a>
+      </div>
     </div>
 
   </div>
