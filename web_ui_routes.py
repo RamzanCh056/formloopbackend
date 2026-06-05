@@ -36,6 +36,7 @@ from billing_plans import (
 from firebase_auth import get_firebase_functions_region, get_firebase_web_config, verify_firebase_id_token
 from user_billing import billing_period_key_for_uid, effective_plan_tier, read_billing
 from output_job_store import list_matte_gifs_for_owner, read_job_owner, read_quota_usage
+from firebase_storage_admin import list_user_exports_from_firestore, get_quota_counter_from_firestore
 
 _log = logging.getLogger(__name__)
 APP_ROOT = Path(__file__).resolve().parent
@@ -417,7 +418,10 @@ def dashboard_home(request: Request):
     else:
         all_gifs = _user_gif_entries(request, limit=None)
         n = len(all_gifs)
-        used_count = read_quota_usage(str(user.id), billing_period_key_for_uid(str(user.id)))
+        _uid_str = str(user.id)
+        _fs_exports = list_user_exports_from_firestore(_uid_str)
+        _fs_counter = get_quota_counter_from_firestore(_uid_str)
+        used_count = max(len(_fs_exports), _fs_counter)
         recent = _user_gif_entries(request, limit=12)
     account_email = ""
     account_name = ""
@@ -460,7 +464,13 @@ def dashboard_gifs(request: Request):
     tier = getattr(user, "plan_tier", "free") or "free"
     gif_limit = getattr(user, "gif_limit", None)
     n = len(items)
-    used_count = 0 if guest_mode else read_quota_usage(str(user.id), billing_period_key_for_uid(str(user.id)))
+    if guest_mode:
+        used_count = 0
+    else:
+        _uid_str = str(user.id)
+        _fs_exports = list_user_exports_from_firestore(_uid_str)
+        _fs_counter = get_quota_counter_from_firestore(_uid_str)
+        used_count = max(len(_fs_exports), _fs_counter)
     at_quota = _quota_enforced() and (not guest_mode and gif_limit is not None and used_count >= gif_limit)
     return templates.TemplateResponse(
         request,
@@ -514,7 +524,10 @@ def profile_page(request: Request):
         return RedirectResponse("/auth/login?next=/profile", status_code=302)
     items = _user_gif_entries(request, limit=None)
     n = len(items)
-    used_count = read_quota_usage(str(user.id), billing_period_key_for_uid(str(user.id)))
+    _uid_str = str(user.id)
+    _fs_exports = list_user_exports_from_firestore(_uid_str)
+    _fs_counter = get_quota_counter_from_firestore(_uid_str)
+    used_count = max(len(_fs_exports), _fs_counter)
     webm_ready = 0
     for it in items:
         try:
