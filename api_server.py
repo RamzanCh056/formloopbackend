@@ -125,6 +125,42 @@ def _apply_video_rotation(src_path: Path, rotation: int) -> Path:
     return out_path
 
 
+def _rotate_export_file(path: Path, rotation: int) -> None:
+    """Rotate an already-rendered export (GIF/WebM) in place via ffmpeg transpose."""
+    rotation = int(rotation or 0)
+    if rotation not in (90, 180, 270) or not path.is_file():
+        return
+    if rotation == 90:
+        transpose = "transpose=1"
+    elif rotation == 180:
+        transpose = "transpose=1,transpose=1"
+    else:  # 270
+        transpose = "transpose=2"
+
+    suffix = path.suffix.lower()
+    tmp_out = path.with_name(path.stem + f"_rot{rotation}_tmp{path.suffix}")
+
+    if suffix == ".gif":
+        # The default GIF encoder rebuilds the palette without reserving a
+        # transparent index, so a plain transpose silently turns alpha into
+        # white. Rebuild the palette explicitly with a reserved transparent
+        # entry so rotated GIFs keep their transparency.
+        vf = (
+            f"{transpose},split[s0][s1];"
+            "[s0]palettegen=reserve_transparent=1:transparency_color=ffffff[p];"
+            "[s1][p]paletteuse=alpha_threshold=128"
+        )
+        cmd = [_FFMPEG, "-y", "-i", str(path), "-vf", vf, str(tmp_out)]
+    else:
+        cmd = [_FFMPEG, "-y", "-i", str(path), "-vf", transpose]
+        if suffix == ".webm":
+            cmd += ["-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p"]
+        cmd += [str(tmp_out)]
+
+    subprocess.run(cmd, check=True, capture_output=True)
+    tmp_out.replace(path)
+
+
 def _apply_reverse_loop(gif_path: Path) -> bool:
     """Append reversed frames to gif_path in-place (boomerang / seamless loop).
 
@@ -1354,6 +1390,12 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
     webm_remote = str(payload.get("webm_url") or "").strip() or None
     platform = str(payload.get("platform") or "").strip() or None
     title = str(payload.get("title") or "").strip() or None
+    try:
+        output_rotation = int(payload.get("output_rotation") or 0)
+    except (TypeError, ValueError):
+        output_rotation = 0
+    if output_rotation not in (90, 180, 270):
+        output_rotation = 0
 
     job_dir = OUTPUTS_DIR / job_id
     # Tiny on-disk job record (.owner, .saved); GIF/WebM for your library go to Firebase via URLs below.
@@ -1390,6 +1432,18 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
             if firebase_storage_ready():
                 gif_path = job_dir / "matte.gif"
                 webm_path = job_dir / "matte_transparent.webm"
+                if output_rotation:
+                    try:
+                        if gif_path.is_file():
+                            await asyncio.to_thread(_rotate_export_file, gif_path, output_rotation)
+                        if webm_path.is_file():
+                            await asyncio.to_thread(_rotate_export_file, webm_path, output_rotation)
+                        print(f"[Rotation] Applied {output_rotation}° to export job_id={job_id}", flush=True)
+                    except Exception as exc:
+                        _log.warning(
+                            "Output rotation failed (rotation=%s job_id=%s): %s — saving unrotated",
+                            output_rotation, job_id, exc,
+                        )
                 urls = None
                 # Prefer local file (watermarked) over remote URL to avoid self-fetch issues.
                 # Fall back to remote URL only when no local file is present (e.g. Firebase-only job).
