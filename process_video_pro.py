@@ -18,7 +18,7 @@ from PIL import Image
 from transformers import AutoModelForImageSegmentation
 from ultralytics import YOLO
 
-INFER_MAX_DIM = 640
+INFER_MAX_DIM = 1024
 _BIREFNET_CACHE: dict[str, tuple[torch.nn.Module, torch.device]] = {}
 
 
@@ -224,7 +224,7 @@ def _get_birefnet(preferred_device: torch.device) -> tuple[torch.nn.Module, torc
     if cached is not None:
         return cached
     _local = '/app/model_cache/birefnet_local'
-    _model_path = _local if os.path.isdir(_local) else 'ZhengPeng7/BiRefNet'
+    _model_path = _local if os.path.isdir(_local) else 'ZhengPeng7/BiRefNet-matting'
     print(f'[BiRefNet] loading from {_model_path}', flush=True)
     model = AutoModelForImageSegmentation.from_pretrained(
         _model_path, trust_remote_code=True,
@@ -315,14 +315,17 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
             # Union of BiRefNet + YOLO
             final_mask = np.maximum(rvm_alpha.astype(np.float32), yolo_mask)
-            final_mask = cv2.GaussianBlur(final_mask, (5, 5), 0)
-            final_mask = final_mask.astype(np.uint8)
+            final_mask = cv2.GaussianBlur(final_mask, (3, 3), 0)
+
+            # Light unsharp pass to recover edge definition lost to the blur above
+            _sharpened = cv2.addWeighted(final_mask, 1.5, cv2.GaussianBlur(final_mask, (3, 3), 0), -0.5, 0)
+            final_mask = np.clip(_sharpened, 0, 255).astype(np.uint8)
 
             # Use YOLO segmentation mask dilated as the crop boundary.
             # This traces the exact person shape instead of a rectangle.
             if yolo_mask.max() > 10:
                 _seg = (yolo_mask > 10).astype(np.uint8) * 255
-                _dk2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (30, 30))
+                _dk2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (18, 18))
                 _seg_dilated = cv2.dilate(_seg, _dk2)
                 final_mask[_seg_dilated == 0] = 0
 
