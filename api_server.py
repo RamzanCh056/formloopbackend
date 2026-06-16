@@ -245,8 +245,8 @@ RUNPOD_STATUS_POLL_SEC = float(os.environ.get("RUNPOD_STATUS_POLL_SEC", "2.0"))
 RUNPOD_JOB_TIMEOUT_SEC = int(os.environ.get("RUNPOD_JOB_TIMEOUT_SEC", "1800"))
 RUNPOD_MAX_RAW_VIDEO_BYTES = int(os.environ.get("RUNPOD_MAX_RAW_VIDEO_BYTES", "7200000"))
 # Cost/runtime guardrails for RunPod serverless path.
-RUNPOD_FORCE_FAST_MODE = (os.environ.get("RUNPOD_FORCE_FAST_MODE", "1").strip().lower() not in {"0", "false", "no"})
-RUNPOD_MAX_GIF_WIDTH = max(320, min(1280, int(os.environ.get("RUNPOD_MAX_GIF_WIDTH", "640"))))
+RUNPOD_FORCE_FAST_MODE = (os.environ.get("RUNPOD_FORCE_FAST_MODE", "0").strip().lower() not in {"0", "false", "no"})
+RUNPOD_MAX_GIF_WIDTH = max(320, min(1280, int(os.environ.get("RUNPOD_MAX_GIF_WIDTH", "960"))))
 RUNPOD_MAX_GIF_FPS = max(1, min(30, int(os.environ.get("RUNPOD_MAX_GIF_FPS", "10"))))
 RUNPOD_ALLOW_LOCAL_FALLBACK = (
     os.environ.get("RUNPOD_ALLOW_LOCAL_FALLBACK", "0").strip().lower() not in {"0", "false", "no"}
@@ -738,7 +738,20 @@ def _ensure_job_assets_from_client_urls(job_dir: Path, gif_url: str | None, webm
     _fetch_remote_asset_if_missing(webm_url, job_dir / "matte_transparent.webm", min_size=256, timeout=300)
 
 
-def _runpod_wait(run_id: str, max_wait_sec: float | None = None) -> dict:
+def _runpod_cancel(run_id: str) -> bool:
+    """Cancel a RunPod job. Returns True if the cancel request was accepted."""
+    try:
+        base = _runpod_base_url()
+        if not base or not run_id:
+            return False
+        resp = requests.post(f"{base}/cancel/{run_id}", headers=_runpod_headers(), timeout=30)
+        return resp.status_code < 300
+    except Exception as exc:
+        print(f"[RUNPOD] cancel({run_id}) failed: {exc}", flush=True)
+        return False
+
+
+def _runpod_wait(run_id: str, max_wait_sec: float | None = None, job_id: str | None = None) -> dict:
     base = _runpod_base_url()
     if not base:
         raise RuntimeError("RUNPOD endpoint is not configured")
@@ -748,6 +761,12 @@ def _runpod_wait(run_id: str, max_wait_sec: float | None = None) -> dict:
     while True:
         if time.time() - started > limit_sec:
             raise TimeoutError("RunPod job timed out")
+        # Check if the local job was cancelled by the user.
+        if job_id:
+            st = _get_job_state(job_id)
+            if st and str(st.get("status") or "") == "cancelled":
+                _runpod_cancel(run_id)
+                return {"status": "CANCELLED", "id": run_id}
         resp = requests.get(f"{base}/status/{run_id}", headers=_runpod_headers(), timeout=120)
         resp.raise_for_status()
         payload = resp.json()
@@ -1334,6 +1353,7 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
     gif_remote = str(payload.get("gif_url") or "").strip() or None
     webm_remote = str(payload.get("webm_url") or "").strip() or None
     platform = str(payload.get("platform") or "").strip() or None
+    title = str(payload.get("title") or "").strip() or None
 
     job_dir = OUTPUTS_DIR / job_id
     # Tiny on-disk job record (.owner, .saved); GIF/WebM for your library go to Firebase via URLs below.
@@ -1411,6 +1431,7 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
                             gif_url=urls["gifUrl"],
                             webm_url=urls.get("webmUrl"),
                             platform=platform,
+                            title=title,
                         )
                     except Exception:
                         _log.debug(
@@ -1556,8 +1577,10 @@ async def _run_runpod_job_async(
             loop_style=loop_style,
         )
         _set_job_state(job_id, status="running", progress=15, message="RunPod job accepted", runpod_job_id=run_id)
-        payload = await asyncio.to_thread(_runpod_wait, run_id)
+        payload = await asyncio.to_thread(_runpod_wait, run_id, None, job_id)
         status = str(payload.get("status") or "").upper()
+        if status == "CANCELLED":
+            return
         if status != "COMPLETED":
             msg = str(payload.get("error") or payload.get("status") or "RunPod failed")
             if RUNPOD_ALLOW_LOCAL_FALLBACK:
@@ -1880,6 +1903,25 @@ async def matte_video_progress(job_id: str) -> JSONResponse:
     return JSONResponse(body)
 
 
+@app.post("/api/v1/matte/cancel/{job_id}")
+async def matte_cancel(job_id: str) -> JSONResponse:
+    """Cancel an in-progress matte job and terminate the RunPod job if active."""
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    state = _get_job_state(job_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    current_status = str(state.get("status") or "")
+    if current_status in {"completed", "failed", "cancelled"}:
+        return JSONResponse({"ok": True, "job_id": job_id, "status": current_status, "note": "already terminal"})
+    _set_job_state(job_id, status="cancelled", progress=0, message="Cancelled by user")
+    runpod_job_id = str(state.get("runpod_job_id") or "")
+    cancelled_runpod = False
+    if runpod_job_id and _runpod_enabled():
+        cancelled_runpod = await asyncio.to_thread(_runpod_cancel, runpod_job_id)
+    return JSONResponse({"ok": True, "job_id": job_id, "status": "cancelled", "runpod_cancelled": cancelled_runpod})
+
+
 @app.post("/api/v1/matte")
 async def matte_video(
     request: Request,
@@ -1982,8 +2024,10 @@ async def matte_video(
                 start_time=start_time,
                 end_time=end_time,
             )
-            payload = await asyncio.to_thread(_runpod_wait, run_id)
+            payload = await asyncio.to_thread(_runpod_wait, run_id, None, job_id)
             status = str(payload.get("status") or "").upper()
+            if status == "CANCELLED":
+                raise HTTPException(status_code=499, detail="Job cancelled by client")
             if status != "COMPLETED":
                 raise HTTPException(
                     status_code=500,
