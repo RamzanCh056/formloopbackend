@@ -84,12 +84,21 @@ def build_transform_img(side: int = 1024):
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
     std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
 
-    def _transform(pil_img: Image.Image) -> torch.Tensor:
-        img = pil_img.resize((side, side), Image.Resampling.BILINEAR)
-        arr = np.asarray(img, dtype=np.float32) / 255.0
+    def _transform(pil_img: Image.Image):
+        # Pad-to-square (letterbox) instead of stretch, so non-square frames
+        # (e.g. 9:16 portrait) aren't distorted before BiRefNet inference.
+        w0, h0 = pil_img.size
+        scale = side / max(w0, h0)
+        nw, nh = max(1, round(w0 * scale)), max(1, round(h0 * scale))
+        resized = pil_img.resize((nw, nh), Image.Resampling.BILINEAR)
+        padded = Image.new("RGB", (side, side), (0, 0, 0))
+        pad_x = (side - nw) // 2
+        pad_y = (side - nh) // 2
+        padded.paste(resized, (pad_x, pad_y))
+        arr = np.asarray(padded, dtype=np.float32) / 255.0
         arr = (arr - mean) / std
         arr = np.transpose(arr, (2, 0, 1))
-        return torch.from_numpy(arr)
+        return torch.from_numpy(arr), (pad_x, pad_y, nw, nh)
 
     return _transform
 
@@ -97,7 +106,8 @@ def build_transform_img(side: int = 1024):
 def get_rvm_alpha(frame_bgr: np.ndarray, model: torch.nn.Module, device: torch.device, transform_img) -> np.ndarray:
     h, w = frame_bgr.shape[:2]
     pil = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
-    inp = transform_img(pil).unsqueeze(0).to(device)
+    tensor, (pad_x, pad_y, nw, nh) = transform_img(pil)
+    inp = tensor.unsqueeze(0).to(device)
     with torch.no_grad():
         out = model(inp)
         pred = out[-1] if isinstance(out, (list, tuple)) else out
@@ -105,6 +115,8 @@ def get_rvm_alpha(frame_bgr: np.ndarray, model: torch.nn.Module, device: torch.d
     alpha = (pred.squeeze().numpy() * 255.0).clip(0, 255).astype(np.uint8)
     if alpha.ndim != 2:
         alpha = alpha.reshape(alpha.shape[-2], alpha.shape[-1])
+    # Crop out the letterbox padding before resizing back to the original aspect ratio.
+    alpha = alpha[pad_y:pad_y + nh, pad_x:pad_x + nw]
     return cv2.resize(alpha, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
@@ -190,7 +202,7 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
         palette = os.path.join(tmp_dir, "palette.png")
         subprocess.run([
             "ffmpeg", "-y", "-framerate", fps_str, "-i", pattern,
-            "-vf", "palettegen=reserve_transparent=1:transparency_color=000000",
+            "-vf", "palettegen=max_colors=255:reserve_transparent=1:stats_mode=diff",
             palette,
         ], check=True, capture_output=True)
         subprocess.run([
@@ -290,7 +302,14 @@ def run_pipeline(args: argparse.Namespace) -> None:
             if frame_idx % 3 == 1 or last_rvm_alpha is None:
                 rvm_alpha_small = get_rvm_alpha(frame_small, birefnet, device, transform_img)
                 rvm_alpha = cv2.resize(rvm_alpha_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
-                last_rvm_alpha = rvm_alpha
+                if last_rvm_alpha is not None:
+                    # EMA blend with the previous mask to reduce flicker between
+                    # the every-3rd-frame BiRefNet re-inference.
+                    rvm_alpha = cv2.addWeighted(
+                        rvm_alpha.astype(np.float32), 0.7,
+                        last_rvm_alpha.astype(np.float32), 0.3, 0,
+                    ).astype(np.uint8)
+                last_rvm_alpha = rvm_alpha.copy()
             else:
                 rvm_alpha = last_rvm_alpha
 
@@ -320,6 +339,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
             # Light unsharp pass to recover edge definition lost to the blur above
             _sharpened = cv2.addWeighted(final_mask, 1.5, cv2.GaussianBlur(final_mask, (3, 3), 0), -0.5, 0)
             final_mask = np.clip(_sharpened, 0, 255).astype(np.uint8)
+
+            # Levels stretch — push semi-transparent edge pixels toward a hard cutout
+            final_mask = np.clip((final_mask.astype(np.float32) - 40) * 1.5, 0, 255).astype(np.uint8)
+
+            # Hard threshold — kill remaining soft fringe pixels (fully transparent, not white)
+            final_mask = np.where(final_mask > 20, final_mask, 0).astype(np.uint8)
 
             # Use YOLO segmentation mask dilated as the crop boundary.
             # This traces the exact person shape instead of a rectangle.
