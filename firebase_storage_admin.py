@@ -324,6 +324,33 @@ def write_export_to_firestore(
         return False
 
 
+def backfill_quota_counters() -> None:
+    """One-time: set quota_used for any user who has export docs but no
+    quota_used field yet, so existing users don't get a free reset to 0 when
+    the permanent-counter quota fix ships. Safe to call more than once —
+    only touches users missing the field.
+    """
+    if not firebase_storage_ready():
+        return
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        users = db.collection("users").stream()
+        for user_doc in users:
+            uid = user_doc.id
+            data = user_doc.to_dict() or {}
+            if "quota_used" not in data:
+                exports = db.collection("users").document(uid).collection("exports").stream()
+                count = sum(1 for _ in exports)
+                if count > 0:
+                    db.collection("users").document(uid).set(
+                        {"quota_used": count}, merge=True,
+                    )
+                    print(f"Backfilled {uid}: {count} exports", flush=True)
+    except Exception as e:
+        print(f"Backfill error: {e}", flush=True)
+
+
 def delete_user_export_from_firestore(uid: str, job_id: str) -> bool:
     """Delete the Firestore export doc(s) for this user/job_id. Returns True if any were deleted."""
     if not firebase_storage_ready():

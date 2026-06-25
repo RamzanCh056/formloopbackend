@@ -1257,6 +1257,8 @@ async def stripe_webhook(request: Request) -> JSONResponse:
 @app.on_event("startup")
 def _startup() -> None:
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    from firebase_storage_admin import backfill_quota_counters
+    asyncio.create_task(asyncio.to_thread(backfill_quota_counters))
     if (os.environ.get("STRIPE_SECRET_KEY") or "").strip():
         _log.info("Stripe: STRIPE_SECRET_KEY loaded — checkout enabled.")
         if not (os.environ.get("STRIPE_WEBHOOK_SECRET") or "").strip():
@@ -1339,9 +1341,13 @@ async def get_quota(request: Request) -> JSONResponse:
     Accepts session cookie (web) or Authorization: Bearer <token> (mobile).
     Response: {"uid": "...", "used": N, "cap": N|null, "tier": "free"|"pro", "exceeded": bool}
 
-    Takes the higher of two sources so neither stale nor missing data hides real usage:
-      - Firestore users/{uid}/exports count (matches profile view)
-      - Local counter file incremented on every completed job
+    ``used`` comes from the permanent users/{uid}.quotaUsed Firestore counter
+    (incremented once per completed job, never decremented). It must NOT be
+    derived from the current count of export documents — deleting a saved
+    GIF removes its export doc but must not free up quota, otherwise users
+    could delete+re-export to bypass their plan cap indefinitely. Falls back
+    to the local on-disk counter only when Firebase isn't configured at all
+    (e.g. pure local dev without Firestore).
     """
     uid = (request.session.get("user_id") or "").strip() or None
     if not uid:
@@ -1352,11 +1358,11 @@ async def get_quota(request: Request) -> JSONResponse:
         raise HTTPException(status_code=401, detail="Sign in required.")
     tier = effective_plan_tier(request) if uid else "free"
     cap = gif_limit_for_tier(tier)
-    from firebase_storage_admin import list_user_exports_from_firestore
-    exports = await asyncio.to_thread(list_user_exports_from_firestore, uid)
-    firestore_count = len(exports)
-    local_count = read_quota_usage(uid, billing_period_key_for_uid(uid))
-    used = max(firestore_count, local_count)
+    from firebase_storage_admin import get_quota_counter_from_firestore, firebase_storage_ready
+    if firebase_storage_ready():
+        used = await asyncio.to_thread(get_quota_counter_from_firestore, uid)
+    else:
+        used = read_quota_usage(uid, billing_period_key_for_uid(uid))
     exceeded = (cap is not None and used >= cap) if _quota_enforced() else False
     return JSONResponse({
         "uid": uid,
@@ -1550,6 +1556,8 @@ async def _run_job_async(
                 except ValueError:
                     pass
                 increment_quota_usage(uid, billing_period_key_for_uid(uid))
+                from firebase_storage_admin import increment_quota_counter_in_firestore
+                await asyncio.to_thread(increment_quota_counter_in_firestore, uid)
             # Watermark applies to ALL free-tier users, including mobile (uid from Bearer token)
             if exports_watermark_for_tier(tier) and not skip_wm:
                 wm = resolve_watermark_png(APP_ROOT)
@@ -1697,6 +1705,8 @@ async def _run_runpod_job_async(
             except ValueError:
                 pass
             increment_quota_usage(uid, billing_period_key_for_uid(uid))
+            from firebase_storage_admin import increment_quota_counter_in_firestore
+            await asyncio.to_thread(increment_quota_counter_in_firestore, uid)
 
         gif_path = OUTPUTS_DIR / job_id / "matte.gif"
 
@@ -2146,6 +2156,8 @@ async def matte_video(
         except ValueError:
             pass
         increment_quota_usage(uid, billing_period_key_for_uid(uid))
+        from firebase_storage_admin import increment_quota_counter_in_firestore
+        await asyncio.to_thread(increment_quota_counter_in_firestore, uid)
     # Watermark applies to all free-tier users (uid not required — mobile uses Bearer token)
     gif_path = OUTPUTS_DIR / job_id / "matte.gif"
     if exports_watermark_for_tier(tier) and not skip_wm:
