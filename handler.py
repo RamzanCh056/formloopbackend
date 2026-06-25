@@ -56,6 +56,15 @@ try:
 except Exception as _e:
     print(f"[Worker] YOLO pre-warm failed: {_e}", flush=True)
 
+try:
+    if _pvp.SAM2_AVAILABLE:
+        print("[Worker] Pre-warming SAM2...", flush=True)
+        _sam2_dev = _dev if '_dev' in dir() else _pvp.pick_device(_PREWARM_DEVICE)
+        _pvp._load_sam2(_sam2_dev)
+        print("[Worker] SAM2 ready.", flush=True)
+except Exception as _e:
+    print(f"[Worker] SAM2 pre-warm failed: {_e}", flush=True)
+
 def upload_to_firebase(local_path, dest_path, content_type):
     """Upload a file to Firebase Storage and return a public https URL."""
     try:
@@ -150,6 +159,7 @@ def handler(job):
     loop_style    = str(job_input.get("loop_style", "normal"))
     dilation      = job_input.get("dilation", 12)
     conf          = job_input.get("conf", 0.20)
+    use_sam2      = bool(job_input.get("use_sam2", False))
     # True = BiRefNet-only (fast). False = full pipeline with YOLO pose/seg (slower, better props/hands).
     # Stability-first default: keep YOLO disabled unless explicitly allowed.
     force_fast = os.environ.get("RVM_FORCE_FAST_MODE", "0").strip().lower() not in {"0", "false", "no"}
@@ -211,7 +221,7 @@ def handler(job):
                 print(f"[Job] rotation ffmpeg error: {(rr.stderr or '')[-200:]}", flush=True)
 
         # Run pipeline in-process so the worker can reuse loaded models across jobs.
-        mode = "BiRefNet-only (fast)" if pro_fast_mode else "BiRefNet + YOLO"
+        mode = "SAM2 + BiRefNet" if use_sam2 else ("BiRefNet-only (fast)" if pro_fast_mode else "BiRefNet + YOLO")
         print(f"[Job] start processing: {mode}")
         ns = SimpleNamespace(
             input=vid_path,
@@ -226,6 +236,7 @@ def handler(job):
             rvm_downsample=0.4,
             no_rvm=False,
             no_yolo=bool(pro_fast_mode),
+            use_sam2=use_sam2,
         )
         prev_wb = os.environ.get("RVM_PRO_GIF_WHITE_BG")
         try:

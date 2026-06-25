@@ -37,14 +37,24 @@ RUN pip install \
     einops \
     kornia \
     timm \
+    hydra-core \
+    iopath \
     torch \
     torchaudio
 
-# Bake BiRefNet model into image — eliminates cold start download
-RUN python3 -c "import os; os.environ['HF_HOME']='/app/model_cache'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='ZhengPeng7/BiRefNet', local_dir='/app/model_cache/birefnet_local', ignore_patterns=['*.msgpack','flax_model*','tf_model*','rust_model*']); print('BiRefNet snapshot downloaded OK')"
+# Bake BiRefNet-matting model into image — eliminates cold start download
+RUN python3 -c "import os; os.environ['HF_HOME']='/app/model_cache'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='ZhengPeng7/BiRefNet-matting', local_dir='/app/model_cache/birefnet_local', ignore_patterns=['*.msgpack','flax_model*','tf_model*','rust_model*']); print('BiRefNet-matting snapshot downloaded OK')"
 
 # Bake YOLO model into image
 RUN python3 -c "import os; os.makedirs('/app/yolo_cache', exist_ok=True); os.environ['YOLO_CONFIG_DIR']='/app/yolo_cache'; from ultralytics import YOLO; m=YOLO('yolov8n-seg.pt'); print('YOLO baked OK')"
+
+# Install SAM2
+RUN pip install git+https://github.com/facebookresearch/sam2.git
+
+# Bake SAM2 checkpoint into image
+RUN python3 -c "from huggingface_hub import snapshot_download; \
+snapshot_download(repo_id='facebook/sam2.1-hiera-large', \
+local_dir='/app/model_cache/sam2_local'); print('SAM2 baked OK')"
 
 ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 

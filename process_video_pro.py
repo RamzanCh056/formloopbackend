@@ -18,8 +18,15 @@ from PIL import Image
 from transformers import AutoModelForImageSegmentation
 from ultralytics import YOLO
 
+try:
+    from sam2.build_sam import build_sam2_video_predictor
+    SAM2_AVAILABLE = True
+except ImportError:
+    SAM2_AVAILABLE = False
+
 INFER_MAX_DIM = 1024
 _BIREFNET_CACHE: dict[str, tuple[torch.nn.Module, torch.device]] = {}
+SAM2_CACHE: dict = {}
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rvm-downsample", type=float, default=0.4)
     p.add_argument("--no-rvm", action="store_true")
     p.add_argument("--no-yolo", action="store_true")
+    p.add_argument("--use-sam2", action="store_true")
     return p.parse_args()
 
 
@@ -256,6 +264,257 @@ def _get_birefnet(preferred_device: torch.device) -> tuple[torch.nn.Module, torc
     return model, actual_device
 
 
+def _load_sam2(device: torch.device):
+    if 'model' not in SAM2_CACHE:
+        from sam2.build_sam import build_sam2_video_predictor
+        predictor = build_sam2_video_predictor(
+            "sam2.1_hiera_large.yaml",
+            "/app/model_cache/sam2_local/sam2.1_hiera_large.pt",
+            device=device,
+        )
+        SAM2_CACHE['model'] = predictor
+    return SAM2_CACHE['model']
+
+
+def get_sam2_mask(
+    frames_bgr: list[np.ndarray],
+    device: torch.device,
+    yolo_box: tuple[float, float, float, float] | None = None,
+) -> list[np.ndarray]:
+    """Use the SAM2 video predictor to get a temporally consistent person mask
+    across all frames. Prompts frame 0 with a YOLO box if available, otherwise
+    a center point, then propagates through the rest of the clip.
+
+    Returns a list of per-frame binary masks (0/255 uint8), one per input frame.
+    """
+    import tempfile
+    import shutil
+
+    predictor = _load_sam2(device)
+    h, w = frames_bgr[0].shape[:2]
+    tmp_dir = tempfile.mkdtemp(prefix="sam2_frames_")
+    try:
+        for i, frame in enumerate(frames_bgr):
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            Image.fromarray(rgb).save(os.path.join(tmp_dir, f"{i:05d}.jpg"), quality=90)
+
+        inference_state = predictor.init_state(video_path=tmp_dir)
+        predictor.reset_state(inference_state)
+        ann_frame_idx = 0
+        ann_obj_id = 1
+
+        if yolo_box is not None:
+            box = np.array(yolo_box, dtype=np.float32)
+            predictor.add_new_points_or_box(
+                inference_state=inference_state, frame_idx=ann_frame_idx,
+                obj_id=ann_obj_id, box=box,
+            )
+        else:
+            points = np.array([[w / 2.0, h / 2.0]], dtype=np.float32)
+            labels = np.array([1], dtype=np.int32)
+            predictor.add_new_points_or_box(
+                inference_state=inference_state, frame_idx=ann_frame_idx,
+                obj_id=ann_obj_id, points=points, labels=labels,
+            )
+
+        masks: list[np.ndarray | None] = [None] * len(frames_bgr)
+        for out_frame_idx, _out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
+            mask = (out_mask_logits[0] > 0.0).cpu().numpy()
+            if mask.ndim != 2:
+                mask = mask.reshape(mask.shape[-2], mask.shape[-1])
+            if 0 <= out_frame_idx < len(masks):
+                masks[out_frame_idx] = (mask.astype(np.uint8) * 255)
+
+        # Fill any frame SAM2 didn't propagate to with the nearest available mask.
+        last = None
+        for i in range(len(masks)):
+            if masks[i] is None:
+                masks[i] = last if last is not None else np.zeros((h, w), dtype=np.uint8)
+            else:
+                last = masks[i]
+        return masks
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _run_birefnet_yolo_pass(
+    frame_source,
+    *,
+    birefnet: torch.nn.Module,
+    device: torch.device,
+    transform_img,
+    yolo_model,
+    ow: int,
+    oh: int,
+    fg_writer,
+    a_writer,
+) -> list[np.ndarray]:
+    """BiRefNet alpha + YOLO union mask pipeline (the original/default pipeline,
+    used when SAM2 is not requested or as a fallback if SAM2 fails)."""
+    gif_frames: list[np.ndarray] = []
+    last_rvm_alpha: np.ndarray | None = None
+    last_yolo_mask_small: np.ndarray | None = None
+    last_yolo_results = None
+    frame_idx = 0
+    for frame in frame_source:
+        frame_idx += 1
+        frame_small, _scale = resize_for_inference(frame)
+
+        # BiRefNet alpha
+        if frame_idx % 3 == 1 or last_rvm_alpha is None:
+            rvm_alpha_small = get_rvm_alpha(frame_small, birefnet, device, transform_img)
+            rvm_alpha = cv2.resize(rvm_alpha_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
+            if last_rvm_alpha is not None:
+                # EMA blend with the previous mask to reduce flicker between
+                # the every-3rd-frame BiRefNet re-inference.
+                rvm_alpha = cv2.addWeighted(
+                    rvm_alpha.astype(np.float32), 0.7,
+                    last_rvm_alpha.astype(np.float32), 0.3, 0,
+                ).astype(np.uint8)
+            last_rvm_alpha = rvm_alpha.copy()
+        else:
+            rvm_alpha = last_rvm_alpha
+
+        # YOLO every 5 frames
+        if frame_idx % 5 == 0 or last_yolo_mask_small is None:
+            yolo_results = yolo_model(frame_small, verbose=False)
+            last_yolo_results = yolo_results
+            yolo_mask_small = np.zeros((frame_small.shape[0], frame_small.shape[1]), dtype=np.float32)
+            for r in yolo_results:
+                if r.masks is not None:
+                    for m in r.masks.data:
+                        mask = m.cpu().numpy()
+                        mask = cv2.resize(mask, (frame_small.shape[1], frame_small.shape[0]), interpolation=cv2.INTER_LINEAR)
+                        yolo_mask_small = np.maximum(yolo_mask_small, mask * 255.0)
+            yolo_mask_small = np.clip(yolo_mask_small, 0, 255)
+            last_yolo_mask_small = yolo_mask_small
+        else:
+            yolo_mask_small = last_yolo_mask_small
+            yolo_results = last_yolo_results
+
+        yolo_mask = cv2.resize(yolo_mask_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
+
+        # Union of BiRefNet + YOLO
+        final_mask = np.maximum(rvm_alpha.astype(np.float32), yolo_mask)
+        final_mask = cv2.GaussianBlur(final_mask, (3, 3), 0)
+
+        # Light unsharp pass to recover edge definition lost to the blur above
+        _sharpened = cv2.addWeighted(final_mask, 1.5, cv2.GaussianBlur(final_mask, (3, 3), 0), -0.5, 0)
+        final_mask = np.clip(_sharpened, 0, 255).astype(np.uint8)
+
+        # Levels stretch — push semi-transparent edge pixels toward a hard cutout
+        final_mask = np.clip((final_mask.astype(np.float32) - 40) * 1.5, 0, 255).astype(np.uint8)
+
+        # Hard threshold — kill remaining soft fringe pixels (fully transparent, not white)
+        final_mask = np.where(final_mask > 20, final_mask, 0).astype(np.uint8)
+
+        # Use YOLO segmentation mask dilated as the crop boundary.
+        # This traces the exact person shape instead of a rectangle.
+        if yolo_mask.max() > 10:
+            _seg = (yolo_mask > 10).astype(np.uint8) * 255
+            _dk2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (18, 18))
+            _seg_dilated = cv2.dilate(_seg, _dk2)
+            final_mask[_seg_dilated == 0] = 0
+
+        rgba = _rgba_from_bgr_and_alpha(frame, final_mask)
+
+        if fg_writer is not None:
+            m3 = (final_mask.astype(np.float32) / 255.0)[..., None]
+            fg = np.clip(frame.astype(np.float32) * m3, 0, 255).astype(np.uint8)
+            fg_writer.write(fg)
+        if a_writer is not None:
+            a_writer.write(cv2.cvtColor(final_mask, cv2.COLOR_GRAY2BGR))
+
+        if frame_idx % 2 == 0:
+            gif_frames.append(rgba)
+
+    return gif_frames
+
+
+def _run_sam2_pipeline(
+    frames_buffer: list[np.ndarray],
+    frames_small_buffer: list[np.ndarray],
+    *,
+    birefnet: torch.nn.Module,
+    device: torch.device,
+    transform_img,
+    yolo_model,
+    ow: int,
+    oh: int,
+    fg_writer,
+    a_writer,
+) -> list[np.ndarray]:
+    """SAM2 + BiRefNet pipeline. SAM2 supplies a temporally-consistent person
+    silhouette (used as the crop boundary in place of YOLO's union mask);
+    BiRefNet still supplies the soft alpha edge detail. final = BiRefNet_alpha
+    AND SAM2_mask (intersection), then the same edge-quality chain as the
+    default pipeline (blur/unsharp/levels/threshold).
+    """
+    if not frames_small_buffer:
+        return []
+
+    # Run YOLO once on frame 0 only, to get a box prompt for SAM2.
+    yolo_box: tuple[float, float, float, float] | None = None
+    try:
+        first_results = yolo_model(frames_small_buffer[0], verbose=False)
+        for r in first_results:
+            if r.boxes is not None and len(r.boxes) > 0:
+                boxes = r.boxes.xyxy.cpu().numpy()
+                areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+                yolo_box = tuple(boxes[int(np.argmax(areas))].tolist())
+                break
+    except Exception as e:
+        print(f"[SAM2] YOLO first-frame box detection failed: {e}", flush=True)
+
+    sam2_masks_small = get_sam2_mask(frames_small_buffer, device, yolo_box=yolo_box)
+
+    gif_frames: list[np.ndarray] = []
+    last_rvm_alpha: np.ndarray | None = None
+    frame_idx = 0
+    for i, frame in enumerate(frames_buffer):
+        frame_idx += 1
+        frame_small = frames_small_buffer[i]
+
+        if frame_idx % 3 == 1 or last_rvm_alpha is None:
+            rvm_alpha_small = get_rvm_alpha(frame_small, birefnet, device, transform_img)
+            rvm_alpha = cv2.resize(rvm_alpha_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
+            if last_rvm_alpha is not None:
+                rvm_alpha = cv2.addWeighted(
+                    rvm_alpha.astype(np.float32), 0.7,
+                    last_rvm_alpha.astype(np.float32), 0.3, 0,
+                ).astype(np.uint8)
+            last_rvm_alpha = rvm_alpha.copy()
+        else:
+            rvm_alpha = last_rvm_alpha
+
+        sam2_mask_small = sam2_masks_small[i] if i < len(sam2_masks_small) else sam2_masks_small[-1]
+        sam2_mask = cv2.resize(sam2_mask_small, (ow, oh), interpolation=cv2.INTER_NEAREST)
+
+        # Intersect BiRefNet's soft alpha with SAM2's stable silhouette.
+        final_mask = np.where(sam2_mask > 0, rvm_alpha, 0).astype(np.float32)
+        final_mask = cv2.GaussianBlur(final_mask, (3, 3), 0)
+
+        _sharpened = cv2.addWeighted(final_mask, 1.5, cv2.GaussianBlur(final_mask, (3, 3), 0), -0.5, 0)
+        final_mask = np.clip(_sharpened, 0, 255).astype(np.uint8)
+
+        final_mask = np.clip((final_mask.astype(np.float32) - 40) * 1.5, 0, 255).astype(np.uint8)
+        final_mask = np.where(final_mask > 20, final_mask, 0).astype(np.uint8)
+
+        rgba = _rgba_from_bgr_and_alpha(frame, final_mask)
+
+        if fg_writer is not None:
+            m3 = (final_mask.astype(np.float32) / 255.0)[..., None]
+            fg = np.clip(frame.astype(np.float32) * m3, 0, 255).astype(np.uint8)
+            fg_writer.write(fg)
+        if a_writer is not None:
+            a_writer.write(cv2.cvtColor(final_mask, cv2.COLOR_GRAY2BGR))
+
+        if frame_idx % 2 == 0:
+            gif_frames.append(rgba)
+
+    return gif_frames
+
+
 def run_pipeline(args: argparse.Namespace) -> None:
     start_time = time.time()
     print("[Pipeline] start processing", flush=True)
@@ -274,6 +533,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
         run_pipeline._yolo_model.overrides["conf"] = 0.15
     yolo_model = run_pipeline._yolo_model
 
+    use_sam2 = bool(getattr(args, "use_sam2", False))
+    if use_sam2 and not SAM2_AVAILABLE:
+        print("[SAM2] use_sam2 requested but sam2 package not installed — falling back to BiRefNet + YOLO", flush=True)
+        use_sam2 = False
+
     cap = cv2.VideoCapture(str(inp))
     if not cap.isOpened():
         raise SystemExit(f"cannot open video: {inp}")
@@ -286,85 +550,53 @@ def run_pipeline(args: argparse.Namespace) -> None:
     a_writer = _writer(Path(args.alpha).resolve(), out_fps, ow, oh, gray=False) if args.alpha else None
 
     gif_frames: list[np.ndarray] = []
-    last_rvm_alpha: np.ndarray | None = None
-    last_yolo_mask_small: np.ndarray | None = None
-    last_yolo_results = None
-    frame_idx = 0
     try:
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            frame_idx += 1
-            frame_small, _scale = resize_for_inference(frame)
+        if use_sam2:
+            print("[Pipeline] mode: SAM2 + BiRefNet", flush=True)
+            # SAM2 needs the whole clip up front for video mask propagation.
+            # These clips are a few seconds, so buffering them in memory is cheap.
+            frames_buffer: list[np.ndarray] = []
+            frames_small_buffer: list[np.ndarray] = []
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                frames_buffer.append(frame)
+                frame_small, _scale = resize_for_inference(frame)
+                frames_small_buffer.append(frame_small)
+            cap.release()
 
-            # BiRefNet alpha
-            if frame_idx % 3 == 1 or last_rvm_alpha is None:
-                rvm_alpha_small = get_rvm_alpha(frame_small, birefnet, device, transform_img)
-                rvm_alpha = cv2.resize(rvm_alpha_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
-                if last_rvm_alpha is not None:
-                    # EMA blend with the previous mask to reduce flicker between
-                    # the every-3rd-frame BiRefNet re-inference.
-                    rvm_alpha = cv2.addWeighted(
-                        rvm_alpha.astype(np.float32), 0.7,
-                        last_rvm_alpha.astype(np.float32), 0.3, 0,
-                    ).astype(np.uint8)
-                last_rvm_alpha = rvm_alpha.copy()
-            else:
-                rvm_alpha = last_rvm_alpha
+            try:
+                gif_frames = _run_sam2_pipeline(
+                    frames_buffer, frames_small_buffer,
+                    birefnet=birefnet, device=device, transform_img=transform_img,
+                    yolo_model=yolo_model, ow=ow, oh=oh,
+                    fg_writer=fg_writer, a_writer=a_writer,
+                )
+            except Exception as e:
+                print(f"[SAM2] pipeline failed, falling back to BiRefNet + YOLO: {e}", flush=True)
+                gif_frames = _run_birefnet_yolo_pass(
+                    iter(frames_buffer),
+                    birefnet=birefnet, device=device, transform_img=transform_img,
+                    yolo_model=yolo_model, ow=ow, oh=oh,
+                    fg_writer=fg_writer, a_writer=a_writer,
+                )
+        else:
+            print("[Pipeline] mode: BiRefNet + YOLO", flush=True)
 
-            # YOLO every 5 frames
-            if frame_idx % 5 == 0 or last_yolo_mask_small is None:
-                yolo_results = yolo_model(frame_small, verbose=False)
-                last_yolo_results = yolo_results
-                yolo_mask_small = np.zeros((frame_small.shape[0], frame_small.shape[1]), dtype=np.float32)
-                for r in yolo_results:
-                    if r.masks is not None:
-                        for m in r.masks.data:
-                            mask = m.cpu().numpy()
-                            mask = cv2.resize(mask, (frame_small.shape[1], frame_small.shape[0]), interpolation=cv2.INTER_LINEAR)
-                            yolo_mask_small = np.maximum(yolo_mask_small, mask * 255.0)
-                yolo_mask_small = np.clip(yolo_mask_small, 0, 255)
-                last_yolo_mask_small = yolo_mask_small
-            else:
-                yolo_mask_small = last_yolo_mask_small
-                yolo_results = last_yolo_results
+            def _cap_frames():
+                while True:
+                    ok, frame = cap.read()
+                    if not ok:
+                        return
+                    yield frame
 
-            yolo_mask = cv2.resize(yolo_mask_small, (ow, oh), interpolation=cv2.INTER_LINEAR)
-
-            # Union of BiRefNet + YOLO
-            final_mask = np.maximum(rvm_alpha.astype(np.float32), yolo_mask)
-            final_mask = cv2.GaussianBlur(final_mask, (3, 3), 0)
-
-            # Light unsharp pass to recover edge definition lost to the blur above
-            _sharpened = cv2.addWeighted(final_mask, 1.5, cv2.GaussianBlur(final_mask, (3, 3), 0), -0.5, 0)
-            final_mask = np.clip(_sharpened, 0, 255).astype(np.uint8)
-
-            # Levels stretch — push semi-transparent edge pixels toward a hard cutout
-            final_mask = np.clip((final_mask.astype(np.float32) - 40) * 1.5, 0, 255).astype(np.uint8)
-
-            # Hard threshold — kill remaining soft fringe pixels (fully transparent, not white)
-            final_mask = np.where(final_mask > 20, final_mask, 0).astype(np.uint8)
-
-            # Use YOLO segmentation mask dilated as the crop boundary.
-            # This traces the exact person shape instead of a rectangle.
-            if yolo_mask.max() > 10:
-                _seg = (yolo_mask > 10).astype(np.uint8) * 255
-                _dk2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (18, 18))
-                _seg_dilated = cv2.dilate(_seg, _dk2)
-                final_mask[_seg_dilated == 0] = 0
-
-            rgba = _rgba_from_bgr_and_alpha(frame, final_mask)
-
-            if fg_writer is not None:
-                m3 = (final_mask.astype(np.float32) / 255.0)[..., None]
-                fg = np.clip(frame.astype(np.float32) * m3, 0, 255).astype(np.uint8)
-                fg_writer.write(fg)
-            if a_writer is not None:
-                a_writer.write(cv2.cvtColor(final_mask, cv2.COLOR_GRAY2BGR))
-
-            if frame_idx % 2 == 0:
-                gif_frames.append(rgba)
+            gif_frames = _run_birefnet_yolo_pass(
+                _cap_frames(),
+                birefnet=birefnet, device=device, transform_img=transform_img,
+                yolo_model=yolo_model, ow=ow, oh=oh,
+                fg_writer=fg_writer, a_writer=a_writer,
+            )
     finally:
         cap.release()
         if fg_writer is not None:
