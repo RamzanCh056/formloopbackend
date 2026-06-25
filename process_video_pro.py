@@ -268,7 +268,7 @@ def _load_sam2(device: torch.device):
     if 'model' not in SAM2_CACHE:
         from sam2.build_sam import build_sam2_video_predictor
         predictor = build_sam2_video_predictor(
-            "sam2.1_hiera_large.yaml",
+            "configs/sam2.1/sam2.1_hiera_l.yaml",
             "/app/model_cache/sam2_local/sam2.1_hiera_large.pt",
             device=device,
         )
