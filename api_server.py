@@ -613,6 +613,7 @@ def _runpod_submit(
     end_time: float | None = None,
     rotation: int = 0,
     loop_style: str = "normal",
+    use_sam2: bool = False,
 ) -> str:
     base = _runpod_base_url()
     if not base:
@@ -680,6 +681,7 @@ def _runpod_submit(
             "start_time": float(start_time) if start_time else 0,
             "end_time": float(end_time) if end_time else None,
             "loop_style": loop_style,
+            "use_sam2": bool(use_sam2),
         }
     }
     print(f"[RUNPOD] submitting: gif_fps={gif_fps} loop_style={loop_style} rotation={rotation}", flush=True)
@@ -1612,6 +1614,7 @@ async def _run_runpod_job_async(
     end_time: float | None = None,
     rotation: int = 0,
     loop_style: str = "normal",
+    use_sam2: bool = False,
 ) -> None:
     _set_job_state(job_id, status="queued", progress=0, message="Queued for RunPod")
     try:
@@ -1629,6 +1632,7 @@ async def _run_runpod_job_async(
             end_time=end_time,
             rotation=rotation,
             loop_style=loop_style,
+            use_sam2=use_sam2,
         )
         _set_job_state(job_id, status="running", progress=15, message="RunPod job accepted", runpod_job_id=run_id)
         payload = await asyncio.to_thread(_runpod_wait, run_id, None, job_id)
@@ -1799,6 +1803,7 @@ async def matte_video_start(
     end_time: float | None = Query(None, description="Trim end in seconds."),
     rotation: int = Query(0, ge=0, le=270, description="Clockwise rotation degrees (0, 90, 180, 270)."),
     loop_style: str = Query("normal", description="Loop style: 'normal' or 'reverse' (boomerang)."),
+    use_sam2: bool = Query(False, description="True = Ultra Quality (SAM2 + BiRefNet on RunPod). Slower, sharper edges."),
 ) -> JSONResponse:
     if _runpod_only_mode() and not _runpod_enabled():
         raise HTTPException(
@@ -1883,6 +1888,7 @@ async def matte_video_start(
                 end_time=end_time,
                 rotation=rotation,
                 loop_style=loop_style,
+                use_sam2=bool(use_sam2),
             )
         )
         return JSONResponse(
@@ -2007,6 +2013,7 @@ async def matte_video(
     ),
     start_time: float | None = Query(None, description="Trim start in seconds."),
     end_time: float | None = Query(None, description="Trim end in seconds."),
+    use_sam2: bool = Query(False, description="True = Ultra Quality (SAM2 + BiRefNet on RunPod). Slower, sharper edges."),
 ) -> JSONResponse:
     """
     Returns JSON with **absolute URLs** for each generated asset (easy to use from mobile).
@@ -2077,6 +2084,7 @@ async def matte_video(
                 gif_white_bg=bool(gif_white_bg),
                 start_time=start_time,
                 end_time=end_time,
+                use_sam2=bool(use_sam2),
             )
             payload = await asyncio.to_thread(_runpod_wait, run_id, None, job_id)
             status = str(payload.get("status") or "").upper()

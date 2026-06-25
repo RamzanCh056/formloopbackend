@@ -409,6 +409,19 @@
               <button id="dash-mode-hq" type="button" class="rounded-md px-2.5 py-1 text-[11px] font-semibold text-white bg-indigo-500/70">High quality</button>
             </div>
           </div>
+          <div class="render-mode-selector mt-3 rounded-lg border border-white/10 bg-white/[0.02] p-3">
+            <label class="text-[11px] text-zinc-400">Render mode</label>
+            <div class="toggle-group mt-2 grid grid-cols-2 gap-2">
+              <button data-mode="fast" type="button" class="render-mode-btn active flex flex-col items-center gap-0.5 rounded-xl border border-indigo-500/40 bg-indigo-500/15 px-3 py-2.5 text-center transition">
+                <span class="text-[13px] font-bold text-white">⚡ Fast</span>
+                <span class="text-[10px] text-zinc-400">2-4 min · Good quality</span>
+              </button>
+              <button data-mode="ultra" type="button" class="render-mode-btn flex flex-col items-center gap-0.5 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-center transition">
+                <span class="text-[13px] font-bold text-zinc-300">✨ Ultra Quality (SAM2)</span>
+                <span class="text-[10px] text-zinc-500">5-8 min · Best quality</span>
+              </button>
+            </div>
+          </div>
           <p id="dash-save-warning" class="mt-2 text-[11px] text-amber-300/90 hidden">Saved locally in testing mode.</p>
           <div id="dash-progress-wrap" class="mt-3 hidden rounded-lg border border-white/10 bg-gradient-to-r from-indigo-500/[0.06] via-transparent to-cyan-500/[0.06] p-2.5">
             <div class="mb-1.5 flex items-center justify-between text-[11px] text-zinc-400">
@@ -1201,6 +1214,31 @@
     let isCutoutProcessing = false;
     let renderMode = 'hq';
     let selectedPlatform = null;
+    let useSam2 = false;
+    const renderModeBtns = document.querySelectorAll('.render-mode-btn');
+    const applySam2ModeUi = () => {
+      renderModeBtns.forEach((b) => {
+        const active = b.dataset.mode === (useSam2 ? 'ultra' : 'fast');
+        b.classList.toggle('active', active);
+        b.classList.toggle('border-indigo-500/40', active);
+        b.classList.toggle('bg-indigo-500/15', active);
+        b.classList.toggle('border-white/10', !active);
+        b.classList.toggle('bg-white/[0.03]', !active);
+        const title = b.querySelector('span:first-child');
+        const sub = b.querySelector('span:last-child');
+        if (title) title.classList.toggle('text-white', active);
+        if (title) title.classList.toggle('text-zinc-300', !active);
+        if (sub) sub.classList.toggle('text-zinc-400', active);
+        if (sub) sub.classList.toggle('text-zinc-500', !active);
+      });
+    };
+    renderModeBtns.forEach((b) => {
+      b.addEventListener('click', () => {
+        useSam2 = b.dataset.mode === 'ultra';
+        applySam2ModeUi();
+      });
+    });
+    applySam2ModeUi();
     const phaseOrder = ['upload', 'matting', 'compositing', 'encoding', 'finalizing'];
     const phaseNodes = {
       upload: phaseUpload,
@@ -1816,6 +1854,7 @@
           model: 'pro',
           gif_white_bg: 'false',
           loop_style: loopStyle,
+          use_sam2: useSam2 ? 'true' : 'false',
         });
         if (trimA > 0) query.set('start_time', trimA.toFixed(2));
         if (trimB > 0 && trimB < clipDuration - 0.1) query.set('end_time', trimB.toFixed(2));
