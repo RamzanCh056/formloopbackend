@@ -506,7 +506,10 @@ def _run_sam2_pipeline(
         _sharpened = cv2.addWeighted(final_mask, 1.5, cv2.GaussianBlur(final_mask, (3, 3), 0), -0.5, 0)
         final_mask = np.clip(_sharpened, 0, 255).astype(np.uint8)
 
-        final_mask = np.clip((final_mask.astype(np.float32) - 40) * 1.5, 0, 255).astype(np.uint8)
+        # Lighter levels stretch than the default pipeline — SAM2 already gives
+        # cleaner masks, so less aggressive stretching is needed to avoid
+        # eating into edge detail.
+        final_mask = np.clip((final_mask.astype(np.float32) - 30) * 1.4, 0, 255).astype(np.uint8)
         final_mask = np.where(final_mask > 20, final_mask, 0).astype(np.uint8)
 
         rgba = _rgba_from_bgr_and_alpha(frame, final_mask)
@@ -533,7 +536,6 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
     requested_device = pick_device(args.device)
     birefnet, device = _get_birefnet(requested_device)
-    transform_img = build_transform_img(1024)
 
     # Reuse cached YOLO model if already loaded
     if not hasattr(run_pipeline, "_yolo_model"):
@@ -546,6 +548,15 @@ def run_pipeline(args: argparse.Namespace) -> None:
     if use_sam2 and not SAM2_AVAILABLE:
         print("[SAM2] use_sam2 requested but sam2 package not installed — falling back to BiRefNet + YOLO", flush=True)
         use_sam2 = False
+
+    if use_sam2:
+        infer_dim = 1280
+        if int(getattr(args, "gif_width", 0) or 0) < 1280:
+            args.gif_width = 1280
+            print("[SAM2] Auto-upgrading gif_width to 1280 for Ultra mode", flush=True)
+    else:
+        infer_dim = INFER_MAX_DIM
+    transform_img = build_transform_img(infer_dim)
 
     cap = cv2.VideoCapture(str(inp))
     if not cap.isOpened():
@@ -571,7 +582,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 if not ok:
                     break
                 frames_buffer.append(frame)
-                frame_small, _scale = resize_for_inference(frame)
+                frame_small, _scale = resize_for_inference(frame, max_dim=infer_dim)
                 frames_small_buffer.append(frame_small)
             cap.release()
 
