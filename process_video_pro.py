@@ -490,8 +490,17 @@ def _run_sam2_pipeline(
         sam2_mask_small = sam2_masks_small[i] if i < len(sam2_masks_small) else sam2_masks_small[-1]
         sam2_mask = cv2.resize(sam2_mask_small, (ow, oh), interpolation=cv2.INTER_NEAREST)
 
-        # Intersect BiRefNet's soft alpha with SAM2's stable silhouette.
-        final_mask = np.where(sam2_mask > 0, rvm_alpha, 0).astype(np.float32)
+        # Blend instead of intersect: SAM2 confident regions use full BiRefNet
+        # alpha (stable person silhouette); BiRefNet-only regions (e.g. held
+        # equipment SAM2's person-only prompt missed) are kept at 80% so
+        # dumbbells/objects don't get cut out just because SAM2 didn't track them.
+        sam2_confident = sam2_mask > 0
+        birefnet_confident = rvm_alpha > 100
+        final_mask = np.where(
+            sam2_confident,
+            rvm_alpha,
+            np.where(birefnet_confident, rvm_alpha * 0.8, 0),
+        ).astype(np.float32)
         final_mask = cv2.GaussianBlur(final_mask, (3, 3), 0)
 
         _sharpened = cv2.addWeighted(final_mask, 1.5, cv2.GaussianBlur(final_mask, (3, 3), 0), -0.5, 0)
