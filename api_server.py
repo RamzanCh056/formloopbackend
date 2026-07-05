@@ -796,6 +796,7 @@ def _runpod_wait(run_id: str, max_wait_sec: float | None = None, job_id: str | N
     started = time.time()
     limit_sec = float(RUNPOD_JOB_TIMEOUT_SEC if max_wait_sec is None else max(1.0, min(float(max_wait_sec), float(RUNPOD_JOB_TIMEOUT_SEC))))
     last: dict = {}
+    run_started: float | None = None
     while True:
         if time.time() - started > limit_sec:
             raise TimeoutError("RunPod job timed out")
@@ -812,6 +813,19 @@ def _runpod_wait(run_id: str, max_wait_sec: float | None = None, job_id: str | N
         status = str(last.get("status") or "").upper()
         if status in {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}:
             return last
+        if job_id:
+            if status == "IN_QUEUE":
+                _set_job_state(job_id, status="queued", progress=1, message="Waiting in queue...")
+            elif status == "IN_PROGRESS":
+                if run_started is None:
+                    run_started = time.time()
+                elapsed_run = time.time() - run_started
+                if elapsed_run < 8:
+                    progress, message = 10, "Initializing model..."
+                else:
+                    progress = min(90, 20 + int(elapsed_run))
+                    message = "Almost done..." if progress >= 80 else "Processing..."
+                _set_job_state(job_id, status="running", progress=progress, message=message)
         time.sleep(max(0.2, RUNPOD_STATUS_POLL_SEC))
 
 
@@ -1642,7 +1656,7 @@ async def _run_runpod_job_async(
             loop_style=loop_style,
             use_sam2=use_sam2,
         )
-        _set_job_state(job_id, status="running", progress=15, message="RunPod job accepted", runpod_job_id=run_id)
+        _set_job_state(job_id, status="queued", progress=1, message="Waiting in queue...", runpod_job_id=run_id)
         payload = await asyncio.to_thread(_runpod_wait, run_id, None, job_id)
         status = str(payload.get("status") or "").upper()
         if status == "CANCELLED":
@@ -1862,11 +1876,15 @@ async def matte_video_start(
         tier = effective_plan_tier(request)
         cap = gif_limit_for_tier(tier)
         if _quota_enforced() and cap is not None:
-            used = read_quota_usage(uid, billing_period_key_for_uid(uid))
+            from firebase_storage_admin import get_quota_counter_from_firestore, firebase_storage_ready
+            if firebase_storage_ready():
+                used = await asyncio.to_thread(get_quota_counter_from_firestore, uid)
+            else:
+                used = read_quota_usage(uid, billing_period_key_for_uid(uid))
             if used >= cap:
                 raise HTTPException(
                     status_code=403,
-                    detail=f"GIF quota reached ({cap} for your plan). Upgrade at /subscription",
+                    detail=f"You've used all {cap} GIFs on your plan. Please upgrade to continue.",
                 )
 
     no_premium = not premium
@@ -1955,10 +1973,13 @@ async def matte_video_progress(job_id: str) -> JSONResponse:
     message = str(state.get("message") or "Queued")
     if status in {"queued", "running"}:
         est_progress, est_message = _estimate_job_progress(job_id, job_status=status)
-        progress = max(progress, est_progress)
-        if progress > int(state.get("progress") or 0):
+        # Only let the disk-based estimate take over once it actually knows more
+        # than the state we already have (e.g. RunPod queue/init messages set by
+        # _runpod_wait) — otherwise it clobbers accurate messages with "Queued".
+        if est_progress > progress:
+            progress = est_progress
+            message = est_message
             _set_job_state(job_id, progress=progress, message=est_message, status="running")
-        message = est_message
     body = {
         "job_id": job_id,
         "status": status,
@@ -2065,11 +2086,15 @@ async def matte_video(
         tier = effective_plan_tier(request)
         cap = gif_limit_for_tier(tier)
         if _quota_enforced() and cap is not None:
-            used = read_quota_usage(uid, billing_period_key_for_uid(uid))
+            from firebase_storage_admin import get_quota_counter_from_firestore, firebase_storage_ready
+            if firebase_storage_ready():
+                used = await asyncio.to_thread(get_quota_counter_from_firestore, uid)
+            else:
+                used = read_quota_usage(uid, billing_period_key_for_uid(uid))
             if used >= cap:
                 raise HTTPException(
                     status_code=403,
-                    detail=f"GIF quota reached ({cap} for your plan). Upgrade at /subscription",
+                    detail=f"You've used all {cap} GIFs on your plan. Please upgrade to continue.",
                 )
 
     no_premium = not premium

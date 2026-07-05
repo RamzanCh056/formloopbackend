@@ -124,7 +124,7 @@
       {% if show_watermark_note %}
       <p class="mt-2.5 text-xs text-zinc-500 max-w-lg leading-relaxed">Free exports carry a subtle <span class="text-zinc-400">FormLoop</span> mark. <a href="/subscription" class="font-semibold text-indigo-400 transition hover:text-indigo-300">Remove it with a plan</a>.</p>
       {% endif %}
-      {% if gif_limit is not none and gif_count >= gif_limit %}
+      {% if gif_limit is not none and (used_count if used_count is defined else gif_count) >= gif_limit %}
       <p class="mt-2.5 text-xs text-amber-200/90 max-w-lg">Plan cap reached ({{ gif_limit }} GIFs). <a href="/subscription" class="font-semibold text-white underline decoration-white/30 underline-offset-2 hover:decoration-white">Upgrade</a> for more.</p>
       {% elif gif_limit is not none %}
       <p class="mt-2.5 text-xs text-zinc-600 max-w-lg"><span class="tabular-nums font-medium text-zinc-400">{{ used_count if used_count is defined else gif_count }}</span><span class="text-zinc-700"> / </span><span class="tabular-nums text-zinc-500">{{ gif_limit }}</span><span class="text-zinc-600"> GIFs this plan</span></p>
@@ -133,9 +133,9 @@
       </div>
     </div>
     <div class="flex flex-wrap items-center gap-2 sm:gap-2.5 shrink-0">
-      <button id="dash-create-top-btn" type="button" class="group dash-sheen inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/30 ring-1 ring-white/10 hover:from-indigo-500 hover:to-violet-500 hover:shadow-indigo-500/40 hover:-translate-y-0.5 active:translate-y-0 transition-all min-h-[44px]">
+      <button id="dash-create-top-btn" type="button" {% if at_quota %}disabled title="You've used all {{ gif_limit }} GIFs on your plan. Please upgrade to continue."{% endif %} class="group dash-sheen inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/30 ring-1 ring-white/10 hover:from-indigo-500 hover:to-violet-500 hover:shadow-indigo-500/40 hover:-translate-y-0.5 active:translate-y-0 transition-all min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none">
         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-        Create a GIF
+        {% if at_quota %}Upgrade to create{% else %}Create a GIF{% endif %}
       </button>
       <a href="/dashboard/gifs" class="inline-flex items-center gap-2 rounded-xl border border-white/[0.1] bg-white/[0.04] hover:bg-white/[0.07] hover:border-indigo-500/20 px-4 py-2.5 text-xs font-semibold text-zinc-200 transition shadow-card">
         <svg class="h-4 w-4 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
@@ -188,8 +188,9 @@
 {% endif %}
 
 {% if not guest_mode %}
-{% set at_quota = (gif_limit is not none and gif_count >= gif_limit) %}
+{% set at_quota = (gif_limit is not none and used_count >= gif_limit) %}
 <input id="dash-video-input" type="file" accept="video/*" class="hidden" />
+<div id="dash-quota-flag" class="hidden" data-at-quota="{{ 'true' if at_quota else 'false' }}" data-gif-limit="{{ gif_limit if gif_limit is not none else '' }}"></div>
 <p id="dash-create-status" class="mb-6 sm:mb-8 text-xs text-zinc-500"></p>
 
 <div id="dash-flow-modal" class="hidden mb-6 sm:mb-8">
@@ -240,7 +241,7 @@
               <li>• Only include the workout movement — cut out setup and rest time</li>
             </ul>
           </div>
-          <video id="dash-trim-video" class="w-full max-h-[52vh] rounded-xl border border-white/10 bg-black object-contain" playsinline muted controls></video>
+          <video id="dash-trim-video" preload="auto" class="w-full max-h-[52vh] rounded-xl border border-white/10 bg-black object-contain" playsinline muted controls></video>
           <div class="mt-3 space-y-2">
             <div class="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
               <div class="flex items-center justify-between mb-1">
@@ -262,9 +263,7 @@
               <span class="text-zinc-400">Selected duration</span>
               <span id="dash-trim-label" class="font-semibold text-cyan-300">0.0s</span>
             </div>
-            <div class="h-1.5 rounded-full bg-white/10 overflow-hidden">
-              <div id="dash-trim-bar" class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-indigo-400 transition-all duration-150" style="width:100%"></div>
-            </div>
+            <input id="dash-trim-duration" type="range" min="0" max="0" step="0.1" value="0" class="w-full accent-cyan-400 min-h-[44px]" />
             <p id="dash-trim-full-label" class="mt-1 text-[10px] text-zinc-600">of 0.0s total</p>
           </div>
           <!-- Orientation / rotation -->
@@ -930,8 +929,8 @@
       <h2 class="relative text-2xl sm:text-[2rem] font-bold text-white tracking-tight">Your GIFs appear here</h2>
       <p class="relative mt-3 text-sm text-zinc-500 leading-relaxed max-w-md mx-auto">Upload a fitness or sports clip and we'll remove the background, generate a transparent GIF + WebM, and save it to your library — like the preview above.</p>
       <div class="relative mt-7 flex flex-col sm:flex-row items-center justify-center gap-2.5">
-        <button id="dash-empty-create-btn" type="button" class="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-500/25 hover:from-indigo-500 hover:to-violet-500 transition ring-1 ring-white/10 min-h-[44px]">
-          Start with a video
+        <button id="dash-empty-create-btn" type="button" {% if at_quota %}disabled title="You've used all {{ gif_limit }} GIFs on your plan. Please upgrade to continue."{% endif %} class="inline-flex w-full sm:w-auto items-center justify-center rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-indigo-500/25 hover:from-indigo-500 hover:to-violet-500 transition ring-1 ring-white/10 min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none">
+          {% if at_quota %}Upgrade to continue{% else %}Start with a video{% endif %}
         </button>
       </div>
     </div>
@@ -1115,6 +1114,7 @@
     const trimVideo = document.getElementById('dash-trim-video');
     const trimStart = document.getElementById('dash-trim-start');
     const trimEnd = document.getElementById('dash-trim-end');
+    const trimDuration = document.getElementById('dash-trim-duration');
     const trimLabel = document.getElementById('dash-trim-label');
     const resultWrap = document.getElementById('dash-result-wrap');
     const gifPreview = document.getElementById('dash-gif-preview');
@@ -1319,6 +1319,8 @@
       });
       if (phaseLabel) phaseLabel.textContent = label || {
         upload: 'Uploading source',
+        queued: 'Waiting in queue...',
+        init: 'Initializing model...',
         matting: 'Removing background',
         compositing: 'Building cutout outputs',
         encoding: 'Encoding GIF + WebM',
@@ -1329,6 +1331,8 @@
     const phaseFromServerMessage = (status, message, pct) => {
       if (status === 'completed') return 'finalizing';
       const m = String(message || '').toLowerCase();
+      if (m.includes('waiting') || m.includes('queue')) return 'queued';
+      if (m.includes('initializ') || m.includes('starting model')) return 'init';
       // Backend often reports 97–99 while FFmpeg watermark still runs; do not label that as “done”.
       if (m.includes('watermark') || m.includes('finishing export') || m.includes('packaging')) return 'encoding';
       if (m.includes('encoding gif')) return 'encoding';
@@ -1543,7 +1547,12 @@
       paneCutout.classList.toggle('hidden', step !== 3);
       if (title) title.textContent = step === 1 ? 'Source' : (step === 2 ? 'Trim' : 'Cutout');
       backBtn.textContent = step === 1 ? 'Cancel' : 'Back';
-      nextBtn.textContent = step === 3 ? (webmUrl ? 'Processed' : 'Finish cutout') : 'Continue';
+      const blockedByQuota = step === 3 && atQuota && !webmUrl;
+      nextBtn.textContent = step === 3 ? (webmUrl ? 'Processed' : (blockedByQuota ? 'Upgrade to continue' : 'Finish cutout')) : 'Continue';
+      nextBtn.disabled = blockedByQuota;
+      nextBtn.classList.toggle('opacity-40', blockedByQuota);
+      nextBtn.classList.toggle('cursor-not-allowed', blockedByQuota);
+      if (blockedByQuota) setFlowStatus(quotaUpgradeMessage, 'error');
       if (saveExportBtn) saveExportBtn.classList.toggle('hidden', step !== 3 || (!webmUrl && !gifUrl));
       if (platformPicker) platformPicker.classList.toggle('hidden', step !== 3 || (!webmUrl && !gifUrl));
       syncGifPreviewForStep3();
@@ -1703,21 +1712,21 @@
       if (trimLabel) trimLabel.textContent = sec(span);
       const startLbl = document.getElementById('dash-trim-start-label');
       const endLbl = document.getElementById('dash-trim-end-label');
-      const trimBar = document.getElementById('dash-trim-bar');
       const trimFullLbl = document.getElementById('dash-trim-full-label');
       if (startLbl) startLbl.textContent = sec(trimA);
       if (endLbl) endLbl.textContent = sec(trimB);
       if (trimFullLbl) trimFullLbl.textContent = `of ${sec(clipDuration)} total`;
-      if (trimBar) {
-        const pct = clipDuration > 0 ? (span / clipDuration) * 100 : 100;
-        trimBar.style.width = `${Math.max(0, Math.min(100, pct)).toFixed(1)}%`;
-      }
+      if (trimDuration) trimDuration.value = String(span);
     };
     const bindTrimToVideo = () => {
       if (!trimVideo) return;
       trimVideo.currentTime = trimA;
+      trimVideo.play().then(() => trimVideo.pause()).catch(() => {});
       trimVideo.ontimeupdate = () => {
         if (step !== 2) return;
+        // Only clamp during actual playback (e.g. the "Preview trim" loop) —
+        // don't fight the user while they're manually scrubbing/paused.
+        if (trimVideo.paused) return;
         if (trimVideo.currentTime > trimB) trimVideo.currentTime = trimA;
         else if (trimVideo.currentTime < trimA) trimVideo.currentTime = trimA;
       };
@@ -1736,6 +1745,7 @@
         clipDuration = d > 0 ? d : 0;
         if (trimStart) { trimStart.max = String(trimB); trimStart.value = '0'; }
         if (trimEnd) { trimEnd.max = String(trimB); trimEnd.value = String(trimB); }
+        if (trimDuration) { trimDuration.max = String(trimB); trimDuration.value = String(trimB); }
         if (metaEl && d > 0) metaEl.textContent = `${(file.size / (1024 * 1024)).toFixed(1)} MB · ${sec(d)}`;
         updateTrimLabel();
       };
@@ -1767,7 +1777,18 @@
       });
     }
 
-    const pickFile = () => input.click();
+    const quotaFlagEl = document.getElementById('dash-quota-flag');
+    const atQuota = quotaFlagEl?.getAttribute('data-at-quota') === 'true';
+    const gifLimitVal = quotaFlagEl?.getAttribute('data-gif-limit') || '';
+    const quotaUpgradeMessage = `You've used all ${gifLimitVal} GIFs on your plan. Please upgrade to continue.`;
+
+    const pickFile = () => {
+      if (atQuota) {
+        setStatus(quotaUpgradeMessage, 'error');
+        return;
+      }
+      input.click();
+    };
     if (btn) btn.addEventListener('click', pickFile);
     if (topBtn) {
       topBtn.addEventListener('click', pickFile);
@@ -1812,10 +1833,23 @@
         if (step === 2) bindTrimToVideo();
         return;
       }
+      if (atQuota) {
+        setFlowStatus(quotaUpgradeMessage, 'error');
+        pushToast(quotaUpgradeMessage, 'error');
+        return;
+      }
       setBusy(true, 'Finishing cutout...');
       try {
         if (webmUrl) {
           setFlowStatus('Already processed. Use "Save export" to store in library.', 'muted');
+          return;
+        }
+        const quotaCheck = await fetch('/api/v1/quota', { credentials: 'same-origin' });
+        const quotaData = await quotaCheck.json().catch(() => ({}));
+        if (quotaData.exceeded) {
+          setFlowStatus(quotaUpgradeMessage, 'error');
+          pushToast(quotaUpgradeMessage, 'error');
+          setBusy(false);
           return;
         }
         const modeCfg = renderMode === 'fast'
@@ -2237,6 +2271,22 @@
           if (trimStart) trimStart.value = String(trimA);
         }
         if (trimVideo) trimVideo.currentTime = trimB;
+        updateTrimLabel();
+      });
+    }
+    if (trimDuration) {
+      trimDuration.addEventListener('input', () => {
+        const span = Number(trimDuration.value || 0);
+        const mid = (trimA + trimB) / 2;
+        let newA = mid - span / 2;
+        let newB = mid + span / 2;
+        if (newA < 0) { newB = Math.min(clipDuration, newB - newA); newA = 0; }
+        if (newB > clipDuration) { newA = Math.max(0, newA - (newB - clipDuration)); newB = clipDuration; }
+        trimA = newA;
+        trimB = newB;
+        if (trimStart) trimStart.value = String(trimA);
+        if (trimEnd) trimEnd.value = String(trimB);
+        if (trimVideo) trimVideo.currentTime = trimA;
         updateTrimLabel();
       });
     }
