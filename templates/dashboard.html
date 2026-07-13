@@ -1923,15 +1923,20 @@
                 throw new Error(detail);
               }
               const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-              // Show GPU busy banner if still queued after 30s
-              if (elapsed >= 30 && (pb?.status === 'queued' || (Number(pb?.progress || 0) <= 1)) && !gpuBannerShown) {
-                gpuBannerShown = true;
-                gpuBanner = document.createElement('div');
-                gpuBanner.id = 'dash-gpu-busy-banner';
-                gpuBanner.className = 'mt-2 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-200 leading-snug';
-                gpuBanner.textContent = '⚠️ GPU is busy — your job is queued. Please wait, processing will start automatically.';
-                const progressWrap = document.getElementById('dash-progress-wrap');
-                if (progressWrap) progressWrap.appendChild(gpuBanner);
+              const rawStatus = String(pb?.status || '');
+              const rawMsgForBanner = String(pb?.message || '').toLowerCase();
+              const stillQueued = rawStatus === 'queued' || rawMsgForBanner.includes('queue') || (Number(pb?.progress || 0) <= 1);
+              // Show GPU busy banner if still queued after 30s, and keep its text fresh while queued
+              if (elapsed >= 30 && stillQueued) {
+                if (!gpuBanner) {
+                  gpuBannerShown = true;
+                  gpuBanner = document.createElement('div');
+                  gpuBanner.id = 'dash-gpu-busy-banner';
+                  gpuBanner.className = 'mt-2 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-200 leading-snug';
+                  const progressWrap = document.getElementById('dash-progress-wrap');
+                  if (progressWrap) progressWrap.appendChild(gpuBanner);
+                }
+                gpuBanner.textContent = '⏳ GPU is warming up — your job is in queue. This can take 2-5 minutes, please wait...';
               }
               // Remove banner once processing starts
               if (gpuBanner && Number(pb?.progress || 0) > 5) {
@@ -1944,11 +1949,22 @@
               if (progressText) progressText.textContent = `${p}%`;
               const eta = p > 0 ? Math.max(0, Math.round((elapsed * (100 - p)) / p)) : 0;
               if (progressElapsed) progressElapsed.textContent = `Elapsed: ${elapsed}s · ETA: ~${eta}s`;
-              const msg = String(pb?.message || 'Removing background');
-              const phaseNow = phaseFromServerMessage(String(pb?.status || ''), msg, p);
+              const rawMsg = String(pb?.message || 'Removing background');
+              const rawMsgLower = rawMsg.toLowerCase();
+              let friendlyMsg = rawMsg;
+              if (rawStatus === 'queued' || rawMsgLower.includes('queue')) {
+                friendlyMsg = '⏳ Waiting in queue — GPU is starting up, please wait...';
+              } else if (rawMsgLower.includes('initializ')) {
+                friendlyMsg = '🔄 Initializing AI model — almost ready...';
+              } else if (rawMsgLower.includes('almost done')) {
+                friendlyMsg = '✨ Almost done — finalizing your export...';
+              } else if (rawMsgLower.includes('processing')) {
+                friendlyMsg = '⚙️ Processing your video...';
+              }
+              const phaseNow = phaseFromServerMessage(rawStatus, rawMsg, p);
               setPhase(phaseNow);
-              if (progressStage) progressStage.textContent = msg;
-              setFlowStatus(`${msg} ${p}% · elapsed ${elapsed}s · ETA ~${eta}s`, 'muted');
+              if (progressStage) progressStage.textContent = friendlyMsg;
+              if (flowStatus) setFlowStatus(`${friendlyMsg} ${p}% · elapsed ${elapsed}s · ETA ~${eta}s`, 'info');
               nextBtn.textContent = `Processing ${p}%`;
               if (pb?.status === 'failed') {
                 throw new Error(String(pb?.error || pb?.message || 'Processing failed.'));

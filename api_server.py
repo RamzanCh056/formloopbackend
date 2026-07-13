@@ -278,7 +278,7 @@ PROCESS_SEMAPHORE = asyncio.Semaphore(int(os.environ.get("RVM_MAX_CONCURRENT_JOB
 OUTPUT_RETENTION_SEC = int(os.environ.get("RVM_OUTPUT_RETENTION_SEC", str(86400)))
 RUNPOD_STATUS_POLL_SEC = float(os.environ.get("RUNPOD_STATUS_POLL_SEC", "2.0"))
 # RunPod "pro" jobs can exceed 15m on busy queues / long clips.
-RUNPOD_JOB_TIMEOUT_SEC = int(os.environ.get("RUNPOD_JOB_TIMEOUT_SEC", "1800"))
+RUNPOD_JOB_TIMEOUT_SEC = int(os.environ.get("RUNPOD_JOB_TIMEOUT_SEC", "3600"))
 RUNPOD_MAX_RAW_VIDEO_BYTES = int(os.environ.get("RUNPOD_MAX_RAW_VIDEO_BYTES", "7200000"))
 # Cost/runtime guardrails for RunPod serverless path.
 RUNPOD_FORCE_FAST_MODE = (os.environ.get("RUNPOD_FORCE_FAST_MODE", "0").strip().lower() not in {"0", "false", "no"})
@@ -799,7 +799,12 @@ def _runpod_wait(run_id: str, max_wait_sec: float | None = None, job_id: str | N
     run_started: float | None = None
     while True:
         if time.time() - started > limit_sec:
-            raise TimeoutError("RunPod job timed out")
+            try:
+                _runpod_cancel(run_id)
+                print(f"[RUNPOD] cancelled timed-out job {run_id}", flush=True)
+            except Exception:
+                pass
+            raise TimeoutError("RunPod job timed out after 60 minutes")
         # Check if the local job was cancelled by the user.
         if job_id:
             st = _get_job_state(job_id)
