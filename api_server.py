@@ -743,20 +743,21 @@ def _runpod_extract_output_dict(payload: dict) -> dict:
 
 
 def _persist_runpod_job_artifacts(job_id: str, payload: dict) -> None:
-    """Optional: mirror RunPod GIF/WebM into ``api_outputs`` for ``GET /api/v1/matte/files/...`` — library Save uses Firebase URLs directly."""
+    """Decode/fetch the GIF locally (needed for the watermark step only) — WebM is served directly from its Firebase URL, never mirrored here."""
     d = _runpod_extract_output_dict(payload)
     if not d:
         return
     work = OUTPUTS_DIR / job_id
     work.mkdir(parents=True, exist_ok=True)
+    gif_dest = work / "matte.gif"
     if isinstance(d.get("gif_b64"), str) and d["gif_b64"].strip():
         try:
-            (work / "matte.gif").write_bytes(base64.b64decode(d["gif_b64"]))
+            gif_dest.write_bytes(base64.b64decode(d["gif_b64"]))
         except Exception as exc:
             _log.warning("RunPod: could not decode/persist GIF b64 for job_id=%s: %s", job_id, exc)
-    gu = d.get("gif_url") if isinstance(d.get("gif_url"), str) else None
-    wu = d.get("webm_url") if isinstance(d.get("webm_url"), str) else None
-    _ensure_job_assets_from_client_urls(work, gu, wu)
+    elif not gif_dest.is_file():
+        gu = d.get("gif_url") if isinstance(d.get("gif_url"), str) else None
+        _fetch_remote_asset_if_missing(gu, gif_dest, min_size=64, timeout=10)
 
 
 def _fetch_remote_asset_if_missing(url: str | None, dest: Path, *, min_size: int, timeout: int) -> bool:
@@ -770,7 +771,8 @@ def _fetch_remote_asset_if_missing(url: str | None, dest: Path, *, min_size: int
         "Accept": "*/*",
     }
     last_exc: Exception | None = None
-    for attempt in range(3):
+    max_attempts = 2
+    for attempt in range(max_attempts):
         try:
             r = requests.get(u, timeout=timeout, headers=hdrs, allow_redirects=True)
             r.raise_for_status()
@@ -784,17 +786,17 @@ def _fetch_remote_asset_if_missing(url: str | None, dest: Path, *, min_size: int
             break
         except Exception as exc:
             last_exc = exc
-            if attempt < 2:
+            if attempt < max_attempts - 1:
                 time.sleep(0.4 * (attempt + 1))
             else:
-                _log.warning("Remote fetch failed after 3 tries %s -> %s: %s", u[:96], dest.name, exc)
+                _log.warning("Remote fetch failed after %s tries %s -> %s: %s", max_attempts, u[:96], dest.name, exc)
     return dest.is_file() and dest.stat().st_size >= min_size
 
 
 def _ensure_job_assets_from_client_urls(job_dir: Path, gif_url: str | None, webm_url: str | None) -> None:
     """Browser passes RunPod/Firebase URLs when ``matte.gif`` was never written under ``api_outputs``."""
-    _fetch_remote_asset_if_missing(gif_url, job_dir / "matte.gif", min_size=64, timeout=180)
-    _fetch_remote_asset_if_missing(webm_url, job_dir / "matte_transparent.webm", min_size=256, timeout=300)
+    _fetch_remote_asset_if_missing(gif_url, job_dir / "matte.gif", min_size=64, timeout=30)
+    _fetch_remote_asset_if_missing(webm_url, job_dir / "matte_transparent.webm", min_size=256, timeout=45)
 
 
 def _runpod_cancel(run_id: str) -> bool:
@@ -1597,7 +1599,13 @@ async def _run_job_async(
                     pass
                 increment_quota_usage(uid, billing_period_key_for_uid(uid))
                 from firebase_storage_admin import increment_quota_counter_in_firestore
-                await asyncio.to_thread(increment_quota_counter_in_firestore, uid)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(increment_quota_counter_in_firestore, uid),
+                        timeout=5,
+                    )
+                except asyncio.TimeoutError:
+                    print(f"[Job] Firestore quota increment timed out — skipping", flush=True)
             # Watermark applies to ALL free-tier users, including mobile (uid from Bearer token)
             if exports_watermark_for_tier(tier) and not skip_wm:
                 wm = resolve_watermark_png(APP_ROOT)
@@ -1608,13 +1616,25 @@ async def _run_job_async(
                         message="Applying watermark…",
                         status="running",
                     )
-                    await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm),
+                            timeout=30,
+                        )
+                    except asyncio.TimeoutError:
+                        print(f"[Job] Watermark timed out — skipping watermark", flush=True)
             if gif_path.is_file() and _gif_frame_count(gif_path) <= 1:
                 rebuilt = await asyncio.to_thread(_rebuild_transparent_gif_from_fg_alpha, OUTPUTS_DIR / job_id, gif_width)
                 if rebuilt and exports_watermark_for_tier(tier) and not skip_wm:
                     wm = resolve_watermark_png(APP_ROOT)
                     if wm:
-                        await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm),
+                                timeout=30,
+                            )
+                        except asyncio.TimeoutError:
+                            print(f"[Job] Watermark timed out — skipping watermark", flush=True)
             body = _build_result_body(
                 public_base,
                 job_id,
@@ -1727,7 +1747,13 @@ async def _run_runpod_job_async(
                 if uid and exports_watermark_for_tier(tier) and not _fb1_skip_wm:
                     wm = resolve_watermark_png(APP_ROOT)
                     if wm and _fb1_gif.is_file():
-                        await asyncio.to_thread(apply_png_watermark_to_gif, _fb1_gif, wm)
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.to_thread(apply_png_watermark_to_gif, _fb1_gif, wm),
+                                timeout=30,
+                            )
+                        except asyncio.TimeoutError:
+                            print(f"[Job] Watermark timed out — skipping watermark", flush=True)
                 body["message"] = "Completed locally after RunPod delay."
                 _set_job_state(
                     job_id,
@@ -1739,7 +1765,15 @@ async def _run_runpod_job_async(
                 return
             _set_job_state(job_id, status="failed", progress=100, message=msg, error=msg)
             return
-        await asyncio.to_thread(_persist_runpod_job_artifacts, job_id, payload)
+        _set_job_state(job_id, status="running", progress=92, message="Downloading results...")
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(_persist_runpod_job_artifacts, job_id, payload),
+                timeout=120,
+            )
+        except asyncio.TimeoutError:
+            print(f"[Job] asset mirror timed out for {job_id} — using Firebase URLs directly", flush=True)
+        _set_job_state(job_id, status="running", progress=96, message="Almost ready...")
 
         # Register owner and increment lifetime quota counter (bug fix: RunPod path was missing this)
         if uid:
@@ -1749,7 +1783,13 @@ async def _run_runpod_job_async(
                 pass
             increment_quota_usage(uid, billing_period_key_for_uid(uid))
             from firebase_storage_admin import increment_quota_counter_in_firestore
-            await asyncio.to_thread(increment_quota_counter_in_firestore, uid)
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(increment_quota_counter_in_firestore, uid),
+                    timeout=5,
+                )
+            except asyncio.TimeoutError:
+                print(f"[Job] Firestore quota increment timed out — skipping", flush=True)
 
         gif_path = OUTPUTS_DIR / job_id / "matte.gif"
 
@@ -1768,7 +1808,13 @@ async def _run_runpod_job_async(
             wm = resolve_watermark_png(APP_ROOT)
             if wm:
                 print(f"[WATERMARK] Applying watermark tier={tier}", flush=True)
-                await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm),
+                        timeout=30,
+                    )
+                except asyncio.TimeoutError:
+                    print(f"[Job] Watermark timed out — skipping watermark", flush=True)
 
         # Serve local URL when GIF is present (watermarked/reversed), Firebase URL otherwise
         if gif_path.is_file():
@@ -1815,7 +1861,13 @@ async def _run_runpod_job_async(
                 if uid and exports_watermark_for_tier(tier) and not _fb2_skip_wm:
                     wm = resolve_watermark_png(APP_ROOT)
                     if wm and _fb2_gif.is_file():
-                        await asyncio.to_thread(apply_png_watermark_to_gif, _fb2_gif, wm)
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.to_thread(apply_png_watermark_to_gif, _fb2_gif, wm),
+                                timeout=30,
+                            )
+                        except asyncio.TimeoutError:
+                            print(f"[Job] Watermark timed out — skipping watermark", flush=True)
                 body = _build_result_body(
                     public_base,
                     job_id,
@@ -2229,19 +2281,37 @@ async def matte_video(
             pass
         increment_quota_usage(uid, billing_period_key_for_uid(uid))
         from firebase_storage_admin import increment_quota_counter_in_firestore
-        await asyncio.to_thread(increment_quota_counter_in_firestore, uid)
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(increment_quota_counter_in_firestore, uid),
+                timeout=5,
+            )
+        except asyncio.TimeoutError:
+            print(f"[Job] Firestore quota increment timed out — skipping", flush=True)
     # Watermark applies to all free-tier users (uid not required — mobile uses Bearer token)
     gif_path = OUTPUTS_DIR / job_id / "matte.gif"
     if exports_watermark_for_tier(tier) and not skip_wm:
         wm = resolve_watermark_png(APP_ROOT)
         if wm and gif_path.is_file():
-            await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm),
+                    timeout=30,
+                )
+            except asyncio.TimeoutError:
+                print(f"[Job] Watermark timed out — skipping watermark", flush=True)
     if gif_path.is_file() and _gif_frame_count(gif_path) <= 1:
         rebuilt = await asyncio.to_thread(_rebuild_transparent_gif_from_fg_alpha, OUTPUTS_DIR / job_id, gif_width)
         if rebuilt and exports_watermark_for_tier(tier) and not skip_wm:
             wm = resolve_watermark_png(APP_ROOT)
             if wm:
-                await asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm),
+                        timeout=30,
+                    )
+                except asyncio.TimeoutError:
+                    print(f"[Job] Watermark timed out — skipping watermark", flush=True)
 
     body: dict = _build_result_body(
         _public_base_url(request),
