@@ -104,6 +104,27 @@ def _probe_video_fps(data: bytes, suffix: str = ".mp4") -> int:
         return 12
 
 
+def _probe_video_duration(data: bytes, suffix: str = ".mp4") -> float:
+    """Detect source video duration (seconds) via ffprobe. Fallback: 0.0."""
+    if not suffix.startswith("."):
+        suffix = "." + suffix
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+            tf.write(data)
+            tmp = Path(tf.name)
+        try:
+            result = subprocess.run(
+                [_FFPROBE, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(tmp)],
+                capture_output=True, text=True, timeout=15,
+            )
+            return float(result.stdout.strip())
+        finally:
+            tmp.unlink(missing_ok=True)
+    except Exception:
+        return 0.0
+
+
 def _apply_video_rotation(src_path: Path, rotation: int) -> Path:
     """Return path to a rotated copy (new file) if rotation != 0, else src_path unchanged."""
     rotation = int(rotation or 0)
@@ -1665,6 +1686,9 @@ async def _run_runpod_job_async(
         payload = await asyncio.to_thread(_runpod_wait, run_id, None, job_id)
         status = str(payload.get("status") or "").upper()
         if status == "CANCELLED":
+            existing = _get_job_state(job_id)
+            if not existing or str(existing.get("status") or "") != "cancelled":
+                _set_job_state(job_id, status="cancelled", progress=0, message="Job was cancelled")
             return
         if status != "COMPLETED":
             msg = str(payload.get("error") or payload.get("status") or "RunPod failed")
@@ -1862,6 +1886,24 @@ async def matte_video_start(
     if gif_fps <= 0:
         gif_fps = await asyncio.to_thread(_probe_video_fps, raw, suffix)
     print(f"[GIF FPS] matte_video_start: probed/requested gif_fps={gif_fps}", flush=True)
+
+    # Check clip duration (different caps per mode: SAM2/Ultra is more expensive per second)
+    clip_dur = await asyncio.to_thread(_probe_video_duration, raw, suffix)
+    effective_dur = clip_dur
+    if start_time is not None and end_time is not None:
+        effective_dur = max(0.0, end_time - start_time)
+    elif end_time is not None:
+        effective_dur = end_time
+    elif start_time is not None:
+        effective_dur = max(0.0, clip_dur - start_time)
+
+    max_dur = 20.0 if use_sam2 else 30.0
+    if effective_dur > max_dur:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Clip is too long ({effective_dur:.0f}s). "
+                   f"Please trim to {max_dur:.0f} seconds or less.",
+        )
 
     # Clamp rotation to valid values
     rotation = rotation if rotation in (0, 90, 180, 270) else 0

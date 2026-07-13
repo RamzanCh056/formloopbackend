@@ -265,6 +265,7 @@
             </div>
             <input id="dash-trim-duration" type="range" min="0" max="0" step="0.1" value="0" class="w-full accent-cyan-400 min-h-[44px]" />
             <p id="dash-trim-full-label" class="mt-1 text-[10px] text-zinc-600">of 0.0s total</p>
+            <p id="dash-trim-duration-warn" class="hidden mt-2 text-xs text-amber-300 font-semibold"></p>
           </div>
           <!-- Orientation / rotation -->
           <div class="mt-4 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-3">
@@ -1236,6 +1237,7 @@
       b.addEventListener('click', () => {
         useSam2 = b.dataset.mode === 'ultra';
         applySam2ModeUi();
+        updateTrimLabel();
       });
     });
     applySam2ModeUi();
@@ -1717,6 +1719,20 @@
       if (endLbl) endLbl.textContent = sec(trimB);
       if (trimFullLbl) trimFullLbl.textContent = `of ${sec(clipDuration)} total`;
       if (trimDuration) trimDuration.value = String(span);
+
+      const maxSec = useSam2 ? 20 : 30;
+      const trimWarnEl = document.getElementById('dash-trim-duration-warn');
+      if (trimWarnEl) {
+        if (span > maxSec) {
+          trimWarnEl.textContent = '⚠️ Clip is too long. Please trim to ' + maxSec + ' seconds or less.';
+          trimWarnEl.classList.remove('hidden');
+        } else if (span > maxSec * 0.75) {
+          trimWarnEl.textContent = '⚠️ Long clips take more time. Under ' + maxSec + 's recommended.';
+          trimWarnEl.classList.remove('hidden');
+        } else {
+          trimWarnEl.classList.add('hidden');
+        }
+      }
     };
     const bindTrimToVideo = () => {
       if (!trimVideo) return;
@@ -1966,6 +1982,9 @@
               if (progressStage) progressStage.textContent = friendlyMsg;
               if (flowStatus) setFlowStatus(`${friendlyMsg} ${p}% · elapsed ${elapsed}s · ETA ~${eta}s`, 'info');
               nextBtn.textContent = `Processing ${p}%`;
+              if (pb?.status === 'cancelled') {
+                throw new Error('Job was cancelled.');
+              }
               if (pb?.status === 'failed') {
                 throw new Error(String(pb?.error || pb?.message || 'Processing failed.'));
               }
@@ -2048,7 +2067,7 @@
           clearInterval(progressPoller);
           progressPoller = null;
         }
-        const aborted = err && (err.name === 'AbortError' || /aborted|abort/i.test(String(err.message || '')));
+        const aborted = err && (err.name === 'AbortError' || /aborted|abort|cancelled|cancel/i.test(String(err.message || '')));
         const msg = aborted ? 'Processing cancelled.' : ((err && err.message) ? err.message : 'Failed to process export.');
         isCutoutProcessing = false;
         if (step === 3) {
