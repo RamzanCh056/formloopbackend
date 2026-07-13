@@ -23,6 +23,9 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
+# Non-torch Python deps first. Do NOT list torch/torchaudio/torchvision here —
+# they are pinned explicitly below, LAST, so nothing in this layer (or the sam2
+# install below) can silently drag in a newer, incompatible CUDA build.
 RUN pip install \
     "transformers==4.45.0" \
     accelerate \
@@ -39,18 +42,37 @@ RUN pip install \
     kornia \
     timm \
     hydra-core \
-    iopath \
-    torch \
-    torchaudio
+    iopath
+
+# Install SAM2 before the torch pin — its setup.py may declare its own torch
+# version constraint; the explicit pin below re-asserts the exact build we
+# need regardless of whatever this step's resolver picked.
+RUN pip install git+https://github.com/facebookresearch/sam2.git
+
+# Pin torch/torchvision/torchaudio LAST, after every other install (including
+# ultralytics and sam2), so nothing above can silently overwrite the base
+# image's known-good cu121 build with a newer CUDA build that requires a
+# newer NVIDIA driver than RunPod's fleet has. Root cause of the "stuck at
+# 90%" silent-CPU-fallback bug: an unpinned `pip install torch` here
+# previously did exactly that.
+RUN pip install \
+    torch==2.4.1 \
+    torchvision==0.19.1 \
+    torchaudio==2.4.1 \
+    --index-url https://download.pytorch.org/whl/cu121
+
+# Fail the build loudly if this ever drifts again, instead of silently
+# shipping an image that falls back to CPU inference on older-driver hosts.
+RUN python -c "import torch, torchvision; \
+    assert torch.__version__.startswith('2.4.1'), torch.__version__; \
+    assert torchvision.__version__.startswith('0.19.1'), torchvision.__version__; \
+    print('torch OK:', torch.__version__, 'cuda tag:', torch.version.cuda)"
 
 # Bake BiRefNet-matting model into image — eliminates cold start download
 RUN python3 -c "import os; os.environ['HF_HOME']='/app/model_cache'; from huggingface_hub import snapshot_download; snapshot_download(repo_id='ZhengPeng7/BiRefNet-matting', local_dir='/app/model_cache/birefnet_local', ignore_patterns=['*.msgpack','flax_model*','tf_model*','rust_model*']); print('BiRefNet-matting snapshot downloaded OK')"
 
 # Bake YOLO model into image
 RUN python3 -c "import os; os.makedirs('/app/yolo_cache', exist_ok=True); os.environ['YOLO_CONFIG_DIR']='/app/yolo_cache'; from ultralytics import YOLO; m=YOLO('yolov8n-seg.pt'); print('YOLO baked OK')"
-
-# Install SAM2
-RUN pip install git+https://github.com/facebookresearch/sam2.git
 
 # Bake SAM2 checkpoint into image
 RUN python3 -c "from huggingface_hub import snapshot_download; \
