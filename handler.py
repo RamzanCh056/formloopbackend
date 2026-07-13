@@ -119,7 +119,11 @@ def _mux_webm_alpha(fg_mp4, alpha_mp4, out_webm):
         "8",
         str(out_webm),
     ]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        print("[WebM] mux timed out after 120s — skipping WebM", flush=True)
+        return
     if r.returncode == 0 and os.path.isfile(out_webm) and os.path.getsize(out_webm) > 32:
         return
     last_err = (r.stderr or r.stdout or "")[-800:]
@@ -136,7 +140,7 @@ def _apply_reverse_loop(gif_path: str) -> bool:
             "[cat]split[sp][sv];[sp]palettegen=reserve_transparent=1:transparency_color=000000[pal];"
             "[sv][pal]paletteuse=dither=none:diff_mode=rectangle",
             "-loop", "0", out_path,
-        ], capture_output=True, text=True)
+        ], capture_output=True, text=True, timeout=120)
         if r.returncode == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 32:
             os.replace(out_path, gif_path)
             return True
@@ -213,7 +217,7 @@ def handler(job):
             rr = subprocess.run([
                 "ffmpeg", "-y", "-i", vid_path, "-vf", vf_map[rotation],
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-an", rotated,
-            ], capture_output=True, text=True)
+            ], capture_output=True, text=True, timeout=120)
             if rr.returncode == 0 and os.path.isfile(rotated) and os.path.getsize(rotated) > 32:
                 os.replace(rotated, vid_path)
                 print(f"[Job] rotation={rotation}° applied", flush=True)

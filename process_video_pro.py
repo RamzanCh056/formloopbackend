@@ -551,9 +551,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
     if use_sam2:
         infer_dim = 1280
-        if int(getattr(args, "gif_width", 0) or 0) < 1280:
-            args.gif_width = 1280
-            print("[SAM2] Auto-upgrading gif_width to 1280 for Ultra mode", flush=True)
+        if int(getattr(args, "gif_width", 0) or 0) < 960:
+            args.gif_width = 960
+            print("[SAM2] Auto-upgrading gif_width to 960 for Ultra mode", flush=True)
     else:
         infer_dim = INFER_MAX_DIM
     transform_img = build_transform_img(infer_dim)
