@@ -548,6 +548,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
     if use_sam2 and not SAM2_AVAILABLE:
         print("[SAM2] use_sam2 requested but sam2 package not installed — falling back to BiRefNet + YOLO", flush=True)
         use_sam2 = False
+    if use_sam2 and device.type != "cuda":
+        print("[SAM2] CUDA not available on this worker — falling back to BiRefNet+YOLO to avoid a CPU stall", flush=True)
+        use_sam2 = False
 
     if use_sam2:
         infer_dim = 1280
