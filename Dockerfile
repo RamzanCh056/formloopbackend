@@ -6,6 +6,29 @@ WORKDIR /app
 ARG CACHE_BUST=20260512_local_birefnet
 RUN echo "Cache bust: $CACHE_BUST"
 
+# Pin torch/torchvision/torchaudio to exactly what the base image already ships
+# (conda-installed, matched to this image's cuDNN9) via a pip constraint file —
+# NOT a reinstall. This blocks any downstream `pip install` (ultralytics, sam2,
+# transformers, etc.) from silently upgrading/replacing them, without touching
+# the base image's already-correct torch+cuDNN install. A prior attempt at this
+# fix reinstalled torch from a pip wheel (download.pytorch.org/whl/cu121), which
+# bundles its own separate cuDNN via nvidia-cudnn-cu12 and conflicted with the
+# base image's conda cuDNN, causing "cuDNN error: CUDNN_STATUS_NOT_INITIALIZED".
+RUN printf "torch==2.4.1\ntorchvision==0.19.1\ntorchaudio==2.4.1\n" > /tmp/torch-constraints.txt
+ENV PIP_CONSTRAINT=/tmp/torch-constraints.txt
+
+# PIP_CONSTRAINT only pins the version IF something triggers an install — it
+# doesn't control which index a fresh install comes from. torch/torchaudio are
+# already present via the base image's conda install, so nothing pulls them
+# fresh. torchvision is NOT bundled in this base image, so ultralytics' install
+# below would otherwise fetch it fresh from default PyPI — a build that can be
+# ABI-incompatible with the base's conda torch ("operator torchvision::nms
+# does not exist"). Install it explicitly, from the CUDA-matched index, first.
+# Unlike torch's pip wheel, torchvision's wheel does not bundle its own
+# separate cuDNN, so this does not reintroduce the CUDNN_STATUS_NOT_INITIALIZED
+# conflict — only torch's pip wheel does that.
+RUN pip install torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu121
+
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     RVM_FORCE_FAST_MODE=0 \
@@ -44,25 +67,16 @@ RUN pip install \
     hydra-core \
     iopath
 
-# Install SAM2 before the torch pin — its setup.py may declare its own torch
-# version constraint; the explicit pin below re-asserts the exact build we
-# need regardless of whatever this step's resolver picked.
+# Install SAM2 last — its setup.py may declare its own torch version
+# constraint, but PIP_CONSTRAINT (set above) blocks pip from acting on it by
+# installing/upgrading torch; it can only proceed if the base image's existing
+# torch==2.4.1 already satisfies whatever SAM2 requires.
 RUN pip install git+https://github.com/facebookresearch/sam2.git
 
-# Pin torch/torchvision/torchaudio LAST, after every other install (including
-# ultralytics and sam2), so nothing above can silently overwrite the base
-# image's known-good cu121 build with a newer CUDA build that requires a
-# newer NVIDIA driver than RunPod's fleet has. Root cause of the "stuck at
-# 90%" silent-CPU-fallback bug: an unpinned `pip install torch` here
-# previously did exactly that.
-RUN pip install \
-    torch==2.4.1 \
-    torchvision==0.19.1 \
-    torchaudio==2.4.1 \
-    --index-url https://download.pytorch.org/whl/cu121
-
-# Fail the build loudly if this ever drifts again, instead of silently
-# shipping an image that falls back to CPU inference on older-driver hosts.
+# Fail the build loudly if the constraint ever failed to hold (i.e. torch got
+# upgraded anyway) or if the base image's version ever drifts, instead of
+# silently shipping an image that falls back to CPU inference on
+# older-driver hosts.
 RUN python -c "import torch, torchvision; \
     assert torch.__version__.startswith('2.4.1'), torch.__version__; \
     assert torchvision.__version__.startswith('0.19.1'), torchvision.__version__; \
