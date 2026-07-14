@@ -52,6 +52,26 @@ def _cuda_runtime_usable() -> bool:
         return False
     print("[CUDA] testing runtime...", flush=True)
     try:
+        # torch.cuda.is_available() only confirms a driver + device exist — it
+        # does NOT confirm this torch build has compiled kernels for the
+        # device's compute capability. Newer GPU generations (e.g. Blackwell,
+        # sm_120) on an older/pinned torch build pass is_available() but then
+        # hard-crash on the first real kernel launch ("no kernel image is
+        # available for execution on the device"). Check the capability
+        # against what this build actually supports first, so we route
+        # through the same CPU-fallback path as the other two cases instead
+        # of letting torch attempt — and crash — a real kernel launch.
+        cap_major, cap_minor = torch.cuda.get_device_capability()
+        cap_str = f"sm_{cap_major}{cap_minor}"
+        supported = torch.cuda.get_arch_list()
+        if supported and cap_str not in supported:
+            print(
+                f"[CUDA] GPU compute capability {cap_str} not supported by this "
+                f"torch build (supports: {', '.join(supported)}) — falling back "
+                f"to BiRefNet+YOLO on CPU",
+                flush=True,
+            )
+            return False
         x = torch.zeros(256, 256, device="cuda")
         x = x * 1.001
         torch.cuda.synchronize()
@@ -252,7 +272,12 @@ def _get_birefnet(preferred_device: torch.device) -> tuple[torch.nn.Module, torc
     model = model.float()
     model.eval()
     import torch
-    if torch.cuda.is_available():
+    # Use the same capability-aware check as pick_device()/_cuda_runtime_usable(),
+    # not a raw torch.cuda.is_available() — that only confirms a driver+device
+    # exist, not that this torch build has kernels for it (see _cuda_runtime_usable
+    # for why: an unsupported architecture like Blackwell/sm_120 passes
+    # is_available() but crashes on the first real kernel launch).
+    if _cuda_runtime_usable():
         actual_device = torch.device("cuda")
         model = model.cuda()
         print(f"[BiRefNet] FORCED to CUDA, dtype=float32", flush=True)
