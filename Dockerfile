@@ -6,28 +6,47 @@ WORKDIR /app
 ARG CACHE_BUST=20260512_local_birefnet
 RUN echo "Cache bust: $CACHE_BUST"
 
-# Pin torch/torchvision/torchaudio to exactly what the base image already ships
-# (conda-installed, matched to this image's cuDNN9) via a pip constraint file —
-# NOT a reinstall. This blocks any downstream `pip install` (ultralytics, sam2,
-# transformers, etc.) from silently upgrading/replacing them, without touching
-# the base image's already-correct torch+cuDNN install. A prior attempt at this
-# fix reinstalled torch from a pip wheel (download.pytorch.org/whl/cu121), which
-# bundles its own separate cuDNN via nvidia-cudnn-cu12 and conflicted with the
-# base image's conda cuDNN, causing "cuDNN error: CUDNN_STATUS_NOT_INITIALIZED".
-RUN printf "torch==2.4.1\ntorchvision==0.19.1\ntorchaudio==2.4.1\n" > /tmp/torch-constraints.txt
-ENV PIP_CONSTRAINT=/tmp/torch-constraints.txt
+# This base image's pytorch/torchvision/torchaudio/cudnn are conda packages
+# living under /opt/conda (verified against PyTorch's own official Dockerfile
+# source for this release: conda install -c pytorch-nightly -c nvidia pytorch
+# torchvision torchaudio pytorch-cuda=12.1 — cudnn9 comes in transitively via
+# pytorch-cuda). Conda's cuDNN .so files live under /opt/conda/lib/. Our pip
+# install below pulls its own separate cuDNN via nvidia-cudnn-cu12, installed
+# under site-packages/nvidia/cudnn/lib/ — a different path. With both present
+# on disk, the dynamic linker can resolve either one first, which is a
+# concrete, verified (not speculative) route to the
+# "cuDNN error: CUDNN_STATUS_NOT_INITIALIZED" failure we hit earlier. Remove
+# conda's copies first so there is exactly one torch+cuDNN stack on disk.
+RUN conda remove -y pytorch torchvision torchaudio pytorch-cuda cudnn --force 2>/dev/null || true
 
-# PIP_CONSTRAINT only pins the version IF something triggers an install — it
-# doesn't control which index a fresh install comes from. torch/torchaudio are
-# already present via the base image's conda install, so nothing pulls them
-# fresh. torchvision is NOT bundled in this base image, so ultralytics' install
-# below would otherwise fetch it fresh from default PyPI — a build that can be
-# ABI-incompatible with the base's conda torch ("operator torchvision::nms
-# does not exist"). Install it explicitly, from the CUDA-matched index, first.
-# Unlike torch's pip wheel, torchvision's wheel does not bundle its own
-# separate cuDNN, so this does not reintroduce the CUDNN_STATUS_NOT_INITIALIZED
-# conflict — only torch's pip wheel does that.
-RUN pip install torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu121
+# SAM2 (pinned to a specific commit below) requires torch>=2.5.1 at build time —
+# newer than the base image's torch==2.4.1, so we can't just "protect" what's
+# already there this time; we need a real upgrade. torch==2.5.1 still publishes
+# a cu121-tagged wheel, so we stay on the same CUDA-12.1 target (and therefore
+# the same older-driver RunPod host compatibility) as before — no need to move
+# to a newer CUDA/driver floor.
+#
+# Install torch+torchvision+torchaudio together in ONE pip command so the
+# resolver picks one mutually-consistent set of transitive nvidia-*-cu12
+# (cuDNN/cuBLAS/etc.) dependencies for all three at once. A prior attempt
+# installed torchvision separately from torch/torchaudio, in different layers,
+# and reinstalling torch from a pip wheel here pulls its own separate cuDNN via
+# nvidia-cudnn-cu12 — which conflicted with the base image's conda-installed
+# cuDNN9, causing "cuDNN error: CUDNN_STATUS_NOT_INITIALIZED". Installing all
+# three together removes one plausible source of that mismatch, but is not a
+# guaranteed fix — if CUDNN_STATUS_NOT_INITIALIZED recurs, the next step is to
+# check whether the base image's conda cudnn lib dir is shadowing the
+# pip-installed one via LD_LIBRARY_PATH.
+RUN pip install \
+    torch==2.5.1 \
+    torchvision==0.20.1 \
+    torchaudio==2.5.1 \
+    --index-url https://download.pytorch.org/whl/cu121
+
+# Pin the constraint file to the same versions so nothing downstream
+# (ultralytics, sam2, transformers) can silently drift them further.
+RUN printf "torch==2.5.1\ntorchvision==0.20.1\ntorchaudio==2.5.1\n" > /tmp/torch-constraints.txt
+ENV PIP_CONSTRAINT=/tmp/torch-constraints.txt
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -67,19 +86,20 @@ RUN pip install \
     hydra-core \
     iopath
 
-# Install SAM2 last — its setup.py may declare its own torch version
-# constraint, but PIP_CONSTRAINT (set above) blocks pip from acting on it by
-# installing/upgrading torch; it can only proceed if the base image's existing
-# torch==2.4.1 already satisfies whatever SAM2 requires.
-RUN pip install git+https://github.com/facebookresearch/sam2.git
+# Install SAM2 last, pinned to the exact commit that requires torch>=2.5.1 —
+# pinning the commit (not just the branch) means a future upstream change to
+# SAM2's own torch requirement can't silently break this build again the same
+# way. PIP_CONSTRAINT (set above) still blocks pip from acting on SAM2's
+# declared torch constraint by installing/upgrading torch further; it can only
+# proceed if the pinned torch==2.5.1 already satisfies it (confirmed it does).
+RUN pip install git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4
 
 # Fail the build loudly if the constraint ever failed to hold (i.e. torch got
-# upgraded anyway) or if the base image's version ever drifts, instead of
-# silently shipping an image that falls back to CPU inference on
-# older-driver hosts.
+# upgraded anyway) or if the pinned version ever drifts, instead of silently
+# shipping an image that falls back to CPU inference on older-driver hosts.
 RUN python -c "import torch, torchvision; \
-    assert torch.__version__.startswith('2.4.1'), torch.__version__; \
-    assert torchvision.__version__.startswith('0.19.1'), torchvision.__version__; \
+    assert torch.__version__.startswith('2.5.1'), torch.__version__; \
+    assert torchvision.__version__.startswith('0.20.1'), torchvision.__version__; \
     print('torch OK:', torch.__version__, 'cuda tag:', torch.version.cuda)"
 
 # Bake BiRefNet-matting model into image — eliminates cold start download
