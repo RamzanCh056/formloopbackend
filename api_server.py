@@ -1822,6 +1822,7 @@ async def _run_modal_job_async(
         progress=1,
         message="Preparing clip for Modal...",
         progress_token=progress_token,
+        is_modal=True,
     )
     try:
         modal_input = await asyncio.to_thread(
@@ -2379,7 +2380,13 @@ async def matte_video_progress(job_id: str) -> JSONResponse:
     status = str(state.get("status") or "queued")
     progress = int(state.get("progress") or 0)
     message = str(state.get("message") or "Queued")
-    if status in {"queued", "running"}:
+    # The disk-based estimator below checks local files (foreground.mp4, a
+    # _process_video.log, etc.) that only exist for the local/RunPod paths —
+    # Modal jobs never produce them until the final mirror-back step, so for
+    # Modal jobs it only ever returns its cold "Initializing model" default
+    # (pct=3) and clobbers our real, lower-but-honest early progress. Modal jobs
+    # carry their own accurate progress via /matte/progress-callback instead.
+    if status in {"queued", "running"} and not state.get("is_modal"):
         est_progress, est_message = _estimate_job_progress(job_id, job_status=status)
         # Only let the disk-based estimate take over once it actually knows more
         # than the state we already have (e.g. RunPod queue/init messages set by
@@ -2403,6 +2410,7 @@ async def matte_video_progress(job_id: str) -> JSONResponse:
 
 
 _PROGRESS_STAGE_LABELS = {
+    "starting": "Starting up GPU",
     "upload": "Uploading",
     "matting": "Matting",
     "compositing": "Compositing",
@@ -2445,6 +2453,10 @@ async def matte_progress_callback(job_id: str, request: Request) -> JSONResponse
     except (TypeError, ValueError):
         pct = 0
     pct = max(0, min(100, pct))
+
+    # TEMPORARY TRACE (remove after diagnosing the smooth-progress-bar
+    # regression): point #3 — receipt time on Railway.
+    print(f"[Progress:recv] job_id={job_id} stage={stage} pct={pct} t={time.time():.3f}", flush=True)
 
     _bump_progress(job_id, pct, label)
     return JSONResponse({"ok": True})
