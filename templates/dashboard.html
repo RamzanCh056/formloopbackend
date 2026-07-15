@@ -342,6 +342,10 @@
                 <div id="dash-gif-info" class="hidden p-2.5 flex flex-col gap-2">
                   <p id="dash-gif-status" class="text-xs font-semibold text-zinc-100 truncate"></p>
                   <div class="flex flex-wrap gap-1.5">
+                    <button id="dash-download-gif" type="button" class="inline-flex items-center gap-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.12] px-2 py-1.5 text-[10px] font-bold text-cyan-400 hover:text-cyan-300 transition ring-1 ring-white/[0.06]">
+                      <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                      Download
+                    </button>
                     <button id="dash-copy-gif" type="button" class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] px-2 py-1.5 text-[10px] font-semibold text-zinc-300 hover:text-white transition">
                       <svg class="h-3.5 w-3.5 shrink-0 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                       Copy URL
@@ -367,6 +371,10 @@
                 <div id="dash-webm-info" class="hidden p-2.5 flex flex-col gap-2">
                   <p id="dash-webm-status" class="text-xs font-semibold text-zinc-100 truncate"></p>
                   <div class="flex flex-wrap gap-1.5">
+                    <button id="dash-download-webm" type="button" class="inline-flex items-center gap-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.12] px-2 py-1.5 text-[10px] font-bold text-cyan-400 hover:text-cyan-300 transition ring-1 ring-white/[0.06]">
+                      <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                      Download
+                    </button>
                     <button id="dash-copy-webm" type="button" class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] px-2 py-1.5 text-[10px] font-semibold text-zinc-300 hover:text-white transition">
                       <svg class="h-3.5 w-3.5 shrink-0 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                       Copy URL
@@ -990,6 +998,7 @@
             data-gif-url="{{ it.gif_url }}"
             data-webm-url="{{ it.webm_url or '' }}"
             data-current-url="{{ it.gif_url }}"
+            data-download-name="{{ it.title or it.source_filename or 'clip' }}"
             class="inline-flex items-center gap-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.12] px-2 py-1.5 text-[10px] font-bold text-cyan-400 hover:text-cyan-300 transition ring-1 ring-white/[0.06]"
           >
             <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -1008,8 +1017,8 @@
             <span class="copy-btn-label" data-smart-copy-label="{{ it.job_id }}">Copy GIF URL</span>
           </button>
           {% if it.webm_url %}
-          <a href="{{ it.webm_url }}" data-open-webm-download="1" title="Open WebM" class="inline-flex items-center gap-1 rounded-lg border border-cyan-500/25 bg-cyan-500/10 px-2 py-1.5 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-500/20 transition">
-            <span>Open WebM</span>
+          <a href="{{ it.webm_url }}" data-open-webm-download="1" data-download-name="{{ it.title or it.source_filename or 'clip' }}" title="Download WebM" class="inline-flex items-center gap-1 rounded-lg border border-cyan-500/25 bg-cyan-500/10 px-2 py-1.5 text-[10px] font-semibold text-cyan-300 hover:bg-cyan-500/20 transition">
+            <span>Download WebM</span>
           </a>
           {% endif %}
           {% if not guest_mode %}
@@ -2266,7 +2275,7 @@
           setFlowStatus('Please save this GIF to your library first to download.', 'error');
           return;
         }
-        handleDownloadClick(dlGifBtn, gifUrl, 'matte.gif');
+        handleDownloadClick(dlGifBtn, gifUrl, `${_slugForDownload(titleInput?.value)}.gif`);
       });
     }
     const dlWebmBtn = document.getElementById('dash-download-webm');
@@ -2277,7 +2286,7 @@
           setFlowStatus('Please save this GIF to your library first to download.', 'error');
           return;
         }
-        handleDownloadClick(dlWebmBtn, webmUrl, 'matte.webm');
+        handleDownloadClick(dlWebmBtn, webmUrl, `${_slugForDownload(titleInput?.value)}.webm`);
       });
     }
     const sp = new URLSearchParams(window.location.search || '');
@@ -2375,6 +2384,11 @@
     }
   };
 
+  const _slugForDownload = (raw) => {
+    const s = (raw || 'clip').trim().replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 60);
+    return s || 'clip';
+  };
+
   const setDownloadingState = (btn, downloading, label) => {
     if (!btn) return;
     const textNode = btn.querySelector('[data-smart-download-label]');
@@ -2433,7 +2447,8 @@
       const smartCopy = id ? document.querySelector(`[data-smart-copy="${id}"]`) : null;
       const type = smartCopy?.getAttribute('data-current-type') || 'gif';
       const url = dlBtn.getAttribute('data-current-url') || '';
-      await handleDownloadClick(dlBtn, url, type === 'webm' ? 'matte.webm' : 'matte.gif');
+      const base = _slugForDownload(dlBtn.getAttribute('data-download-name'));
+      await handleDownloadClick(dlBtn, url, type === 'webm' ? `${base}.webm` : `${base}.gif`);
       return;
     }
 
@@ -2443,7 +2458,8 @@
       e.stopPropagation();
       if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
       const webmUrl = webmBtn.getAttribute('href') || '';
-      await handleDownloadClick(webmBtn, webmUrl, 'matte.webm');
+      const base = _slugForDownload(webmBtn.getAttribute('data-download-name'));
+      await handleDownloadClick(webmBtn, webmUrl, `${base}.webm`);
     }
   }, true);
 

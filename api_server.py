@@ -309,6 +309,17 @@ RUNPOD_ALLOW_LOCAL_FALLBACK = (
     os.environ.get("RUNPOD_ALLOW_LOCAL_FALLBACK", "0").strip().lower() not in {"0", "false", "no"}
 )
 
+# Parallel Modal test path (local testing only) — defaults OFF, production (Railway)
+# never sets USE_MODAL so this never activates there. Positive-match (not
+# not-in-falsy-set) so an empty/unset USE_MODAL is unambiguously false.
+USE_MODAL = (os.environ.get("USE_MODAL", "0").strip().lower() in {"1", "true", "yes"})
+MODAL_ENDPOINT_URL = (os.environ.get("MODAL_ENDPOINT_URL") or "").strip().rstrip("/")
+MODAL_JOB_TIMEOUT_SEC = int(os.environ.get("MODAL_JOB_TIMEOUT_SEC", "900"))
+
+
+def _modal_enabled() -> bool:
+    return USE_MODAL and bool(MODAL_ENDPOINT_URL)
+
 
 def _pro_skip_yolo() -> bool:
     """True = fast BiRefNet-only (no YOLO). False = full pipeline with YOLO."""
@@ -1299,6 +1310,11 @@ async def stripe_webhook(request: Request) -> JSONResponse:
 @app.on_event("startup")
 def _startup() -> None:
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    print(
+        f"[ROUTING] modal_enabled={_modal_enabled()} runpod_enabled={_runpod_enabled()} "
+        f"modal_url={MODAL_ENDPOINT_URL or '(empty)'}",
+        flush=True,
+    )
     from firebase_storage_admin import backfill_quota_counters
     asyncio.create_task(asyncio.to_thread(backfill_quota_counters))
     if (os.environ.get("STRIPE_SECRET_KEY") or "").strip():
@@ -1666,6 +1682,221 @@ async def _run_job_async(
             _set_job_state(job_id, status="failed", progress=100, message=detail, error=detail)
 
 
+def _modal_prepare_input(
+    raw: bytes,
+    *,
+    job_id: str,
+    filename: str | None,
+    gif_width: int,
+    gif_fps: int,
+    pro_fast_mode: bool | None = None,
+    gif_white_bg: bool = False,
+    start_time: float | None = None,
+    end_time: float | None = None,
+    rotation: int = 0,
+    loop_style: str = "normal",
+    use_sam2: bool = False,
+) -> dict:
+    """Duplicated from _runpod_submit's video-prep steps (trim/rotate/upload) so the
+    RunPod path above is never touched. Builds the same input payload shape RunPod
+    sends, since the Modal endpoint accepts the identical contract."""
+    exercise_name = Path(filename or f"clip_{uuid.uuid4().hex[:8]}.mp4").stem[:120]
+    suffix = Path(filename or "upload.mp4").suffix.lower()
+    if suffix not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
+        suffix = ".mp4"
+    job_dir = OUTPUTS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    src_name = f"{exercise_name}_{job_id[:8]}{suffix}"
+    src_path = job_dir / src_name
+    src_path.write_bytes(raw)
+    if (start_time and float(start_time) > 0) or end_time is not None:
+        trimmed_path = str(src_path).replace(suffix, f"_trimmed{suffix}")
+        st = float(start_time) if start_time else 0.0
+        et = float(end_time) if end_time is not None else None
+        trim_cmd = [_FFMPEG, "-y", "-ss", str(st), "-i", str(src_path)]
+        if et is not None:
+            trim_cmd += ["-t", str(et - st)]
+        trim_cmd += ["-c", "copy", trimmed_path]
+        subprocess.run(trim_cmd, check=True, capture_output=True)
+        src_path = Path(trimmed_path)
+        with open(src_path, "rb") as f:
+            raw = f.read()
+    if rotation:
+        try:
+            rotated = _apply_video_rotation(src_path, rotation)
+            if rotated != src_path:
+                src_path = rotated
+                with open(src_path, "rb") as f:
+                    raw = f.read()
+        except Exception as exc:
+            _log.warning("Modal: rotation failed (rotation=%s): %s — continuing without rotation", rotation, exc)
+    try:
+        from firebase_storage_admin import upload_runpod_input_video
+
+        input_url = upload_runpod_input_video(job_id=job_id, filename=src_name, local_path=src_path)
+    except Exception as exc:
+        raise RuntimeError(
+            "Modal input upload failed. Configure Firebase Storage so backend can create a public input URL. "
+            f"Reason: {exc}"
+        ) from exc
+    fast = _pro_skip_yolo() if pro_fast_mode is None else bool(pro_fast_mode)
+    return {
+        "video_url": input_url,
+        "exercise_name": exercise_name,
+        "gif_width": int(gif_width),
+        "gif_fps": int(max(1, min(30, gif_fps))),
+        "pro_fast_mode": fast,
+        "gif_white_bg": bool(gif_white_bg),
+        "start_time": float(start_time) if start_time else 0,
+        "end_time": float(end_time) if end_time else None,
+        "loop_style": loop_style,
+        "use_sam2": bool(use_sam2),
+    }
+
+
+async def _run_modal_job_async(
+    *,
+    job_id: str,
+    raw: bytes,
+    filename: str | None,
+    gif_width: int,
+    gif_fps: int,
+    public_base: str,
+    uid: str | None = None,
+    tier: str = "free",
+    pro_fast_mode: bool | None = None,
+    gif_white_bg: bool = False,
+    start_time: float | None = None,
+    end_time: float | None = None,
+    rotation: int = 0,
+    loop_style: str = "normal",
+    use_sam2: bool = False,
+) -> None:
+    """Local-test-only path: routes processing to the Modal web endpoint instead of
+    RunPod. The Modal call is synchronous (blocks until the GIF/WebM is ready), so it
+    runs in a background thread via asyncio.to_thread — matte_video_start still
+    returns job_id immediately and the frontend keeps polling /matte/progress as usual."""
+    _set_job_state(job_id, status="queued", progress=0, message="Preparing clip for Modal...")
+    try:
+        modal_input = await asyncio.to_thread(
+            _modal_prepare_input,
+            raw,
+            job_id=job_id,
+            filename=filename,
+            gif_width=gif_width,
+            gif_fps=gif_fps,
+            pro_fast_mode=pro_fast_mode,
+            gif_white_bg=gif_white_bg,
+            start_time=start_time,
+            end_time=end_time,
+            rotation=rotation,
+            loop_style=loop_style,
+            use_sam2=use_sam2,
+        )
+        _set_job_state(
+            job_id, status="running", progress=10, message="Processing on Modal (A10 GPU)..."
+        )
+
+        def _call_modal() -> dict:
+            resp = requests.post(
+                MODAL_ENDPOINT_URL,
+                json=modal_input,
+                timeout=(10, MODAL_JOB_TIMEOUT_SEC),
+            )
+            if resp.status_code >= 400:
+                detail = (resp.text or "").strip()
+                if len(detail) > 500:
+                    detail = detail[:500] + "...[truncated]"
+                raise RuntimeError(f"Modal endpoint failed ({resp.status_code}): {detail or 'no response body'}")
+            return resp.json()
+
+        modal_result = await asyncio.to_thread(_call_modal)
+
+        existing = _get_job_state(job_id)
+        if existing and str(existing.get("status") or "") == "cancelled":
+            return
+
+        if modal_result.get("error"):
+            msg = str(modal_result.get("error"))
+            _set_job_state(job_id, status="failed", progress=100, message=msg, error=msg)
+            return
+
+        _set_job_state(job_id, status="running", progress=92, message="Downloading results...")
+        payload = {"output": modal_result}
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(_persist_runpod_job_artifacts, job_id, payload),
+                timeout=120,
+            )
+        except asyncio.TimeoutError:
+            print(f"[Job] Modal asset mirror timed out for {job_id} — using Firebase URLs directly", flush=True)
+        webm_remote_url = modal_result.get("webm_url")
+        if isinstance(webm_remote_url, str) and webm_remote_url:
+            webm_dest = OUTPUTS_DIR / job_id / "matte_transparent.webm"
+            mirrored = await asyncio.to_thread(
+                _fetch_remote_asset_if_missing, webm_remote_url, webm_dest, min_size=256, timeout=45
+            )
+            print(f"[Job] Modal webm mirror {'OK' if mirrored else 'FAILED'} -> {webm_dest}", flush=True)
+        _set_job_state(job_id, status="running", progress=96, message="Almost ready...")
+
+        if uid:
+            try:
+                write_job_owner(job_id, uid)
+            except ValueError:
+                pass
+            increment_quota_usage(uid, billing_period_key_for_uid(uid))
+            from firebase_storage_admin import increment_quota_counter_in_firestore
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(increment_quota_counter_in_firestore, uid),
+                    timeout=5,
+                )
+            except asyncio.TimeoutError:
+                print(f"[Job] Firestore quota increment timed out — skipping", flush=True)
+
+        gif_path = OUTPUTS_DIR / job_id / "matte.gif"
+
+        if loop_style == "reverse" and gif_path.is_file():
+            await asyncio.to_thread(_apply_reverse_loop, gif_path)
+
+        skip_wm = (os.environ.get("RVM_SKIP_GIF_WATERMARK") or "").strip().lower() in {"1", "true", "yes"}
+        if exports_watermark_for_tier(tier) and not skip_wm and gif_path.is_file():
+            wm = resolve_watermark_png(APP_ROOT)
+            if wm:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(apply_png_watermark_to_gif, gif_path, wm),
+                        timeout=30,
+                    )
+                except asyncio.TimeoutError:
+                    print(f"[Job] Watermark timed out — skipping watermark", flush=True)
+
+        if gif_path.is_file():
+            result_body = _build_result_body(
+                public_base, job_id, gif_width=gif_width, effective_formats="gif", premium=False, model="pro"
+            )
+        else:
+            result_body = _runpod_output_to_body(job_id, payload)
+
+        existing = _get_job_state(job_id)
+        if existing and str(existing.get("status") or "") == "cancelled":
+            return
+
+        _set_job_state(
+            job_id,
+            status="completed",
+            progress=100,
+            message="Completed",
+            result=result_body,
+        )
+    except Exception as exc:
+        msg = str(exc)
+        existing = _get_job_state(job_id)
+        if existing and str(existing.get("status") or "") == "cancelled":
+            return
+        _set_job_state(job_id, status="failed", progress=100, message=msg, error=msg)
+
+
 async def _run_runpod_job_async(
     *,
     job_id: str,
@@ -1910,12 +2141,12 @@ async def matte_video_start(
     loop_style: str = Query("normal", description="Loop style: 'normal' or 'reverse' (boomerang)."),
     use_sam2: bool = Query(False, description="True = Ultra Quality (SAM2 + BiRefNet on RunPod). Slower, sharper edges."),
 ) -> JSONResponse:
-    if _runpod_only_mode() and not _runpod_enabled():
+    if _runpod_only_mode() and not _runpod_enabled() and not _modal_enabled():
         raise HTTPException(
             status_code=503,
             detail="RunPod is required in this environment but not configured.",
         )
-    if _runpod_enabled() and model != "pro":
+    if (_runpod_enabled() or _modal_enabled()) and model != "pro":
         model = "pro"
     if model == "rvm" and not CHECKPOINT.is_file():
         raise HTTPException(status_code=503, detail="Model checkpoint missing (rvm_resnet50.pth)")
@@ -1988,6 +2219,38 @@ async def matte_video_start(
 
     no_premium = not premium
     effective_formats = "gif" if no_premium else transparent_formats
+    if _modal_enabled():
+        public_base = _public_base_url(request)
+        _set_job_state(job_id, status="queued", progress=0, message="Queued for Modal")
+        asyncio.create_task(
+            _run_modal_job_async(
+                job_id=job_id,
+                raw=raw,
+                filename=file.filename,
+                gif_width=gif_width,
+                gif_fps=gif_fps,
+                public_base=public_base,
+                uid=uid,
+                tier=tier,
+                pro_fast_mode=bool(fast_mode),
+                gif_white_bg=bool(gif_white_bg),
+                start_time=start_time,
+                end_time=end_time,
+                rotation=rotation,
+                loop_style=loop_style,
+                use_sam2=bool(use_sam2),
+            )
+        )
+        return JSONResponse(
+            {
+                "success": True,
+                "job_id": job_id,
+                "status": "queued",
+                "progress": 0,
+                "message": "Modal processing started",
+                "progress_url": f"{public_base}/api/v1/matte/progress/{job_id}",
+            }
+        )
     if _runpod_enabled():
         # RunPod serverless guardrails: force single fast pass to reduce timeout risk/cost.
         if RUNPOD_FORCE_FAST_MODE:

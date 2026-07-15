@@ -104,18 +104,19 @@
           {% endif %}
         </div>
         <div class="flex flex-wrap gap-1.5 mt-auto">
-          <a
-            href="{{ it.gif_url }}"
-            download
+          <button
+            type="button"
             title="Download current preview"
             data-smart-download="{{ it.job_id }}"
             data-gif-url="{{ it.gif_url }}"
             data-webm-url="{{ it.webm_url or '' }}"
+            data-current-url="{{ it.gif_url }}"
+            data-download-name="{{ it.title or it.source_filename or 'clip' }}"
             class="inline-flex items-center gap-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.12] px-2 py-1.5 text-[10px] font-bold text-cyan-400 hover:text-cyan-300 transition ring-1 ring-white/[0.06]"
           >
             <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
             <span data-smart-download-label="{{ it.job_id }}">Download GIF</span>
-          </a>
+          </button>
           <button
             type="button"
             data-smart-copy="{{ it.job_id }}"
@@ -216,7 +217,7 @@
         webmEl.play().catch(() => {});
         if (smartDownload) {
           const webmUrl = smartDownload.getAttribute('data-webm-url') || '';
-          if (webmUrl) smartDownload.setAttribute('href', webmUrl);
+          if (webmUrl) smartDownload.setAttribute('data-current-url', webmUrl);
         }
         if (smartLabel) smartLabel.textContent = 'Download WebM';
         if (smartCopy) smartCopy.setAttribute('data-current-type', 'webm');
@@ -229,7 +230,7 @@
         }
         if (smartDownload) {
           const gifUrl = smartDownload.getAttribute('data-gif-url') || '';
-          if (gifUrl) smartDownload.setAttribute('href', gifUrl);
+          if (gifUrl) smartDownload.setAttribute('data-current-url', gifUrl);
         }
         if (smartLabel) smartLabel.textContent = 'Download GIF';
         if (smartCopy) smartCopy.setAttribute('data-current-type', 'gif');
@@ -237,6 +238,88 @@
       }
     });
   });
+
+  // Downloads route through the api_server proxy (/api/v1/matte/download) so the
+  // response gets a same-origin Content-Disposition: attachment header — a direct
+  // <a href=firebase-url download> is ignored by browsers for cross-origin URLs,
+  // which is why this used to open the GIF inline instead of downloading it.
+  const buildDownloadUrl = (rawUrl, filename) => {
+    if (!rawUrl) return '';
+    try {
+      const u = new URL(rawUrl, window.location.origin);
+      if (u.hostname.includes('firebasestorage.googleapis.com') || u.hostname.includes('storage.googleapis.com')) {
+        u.searchParams.set('response-content-disposition', `attachment; filename="${filename}"`);
+      }
+      return u.toString();
+    } catch (_) {
+      return rawUrl;
+    }
+  };
+
+  const setDownloadingState = (btn, downloading, label) => {
+    const textNode = btn.querySelector('[data-smart-download-label]') || btn.querySelector('span');
+    if (!btn.dataset.originalDownloadLabel) {
+      btn.dataset.originalDownloadLabel = textNode ? textNode.textContent : (btn.textContent || '');
+    }
+    if (downloading) {
+      btn.disabled = true;
+      btn.classList.add('opacity-70', 'cursor-not-allowed');
+      if (textNode) textNode.textContent = label || 'Downloading...';
+    } else {
+      btn.disabled = false;
+      btn.classList.remove('opacity-70', 'cursor-not-allowed');
+      if (textNode) textNode.textContent = btn.dataset.originalDownloadLabel || 'Download';
+    }
+  };
+
+  const triggerDirectDownload = async (url, filename) => {
+    if (!url) return;
+    const finalUrl = buildDownloadUrl(url, filename);
+    const proxyUrl = `/api/v1/matte/download?url=${encodeURIComponent(finalUrl)}&filename=${encodeURIComponent(filename)}`;
+    const resp = await fetch(proxyUrl, { credentials: 'same-origin' });
+    if (!resp.ok) throw new Error(`download failed: ${resp.status}`);
+    const blob = await resp.blob();
+    if (!blob || blob.size === 0) throw new Error('downloaded file is empty');
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+  };
+
+  const handleDownloadClick = async (btn, url, filename) => {
+    setDownloadingState(btn, true, `Downloading ${filename.endsWith('.webm') ? 'WebM' : 'GIF'}...`);
+    try {
+      await triggerDirectDownload(url, filename);
+    } catch (err) {
+      const msg = (err && err.message) ? err.message : 'Download failed';
+      alert(`${msg}\nTry this URL directly:\n${url}`);
+    } finally {
+      setDownloadingState(btn, false);
+    }
+  };
+
+  const _slugForDownload = (raw) => {
+    const s = (raw || 'clip').trim().replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 60);
+    return s || 'clip';
+  };
+
+  document.addEventListener('click', async (e) => {
+    const dlBtn = e.target?.closest?.('[data-smart-download]');
+    if (!dlBtn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+    const id = dlBtn.getAttribute('data-smart-download');
+    const smartCopy = id ? document.querySelector(`[data-smart-copy="${id}"]`) : null;
+    const type = smartCopy?.getAttribute('data-current-type') || 'gif';
+    const url = dlBtn.getAttribute('data-current-url') || '';
+    const base = _slugForDownload(dlBtn.getAttribute('data-download-name'));
+    await handleDownloadClick(dlBtn, url, type === 'webm' ? `${base}.webm` : `${base}.gif`);
+  }, true);
 </script>
 {% endif %}
 {% endblock %}
