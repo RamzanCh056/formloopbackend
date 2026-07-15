@@ -1815,7 +1815,17 @@ async def _run_modal_job_async(
     runs in a background thread via asyncio.to_thread — matte_video_start still
     returns job_id immediately and the frontend keeps polling /matte/progress as usual."""
     progress_token = secrets.token_urlsafe(24)
+    # Must be HTTPS: an http:// callback URL gets 301-redirected to https by
+    # Railway's edge, and `requests` follows 301/302 redirects by downgrading
+    # POST to GET — which is exactly what silently broke progress callbacks
+    # (Railway logs showed GET .../progress-callback/... -> 405, never a POST).
+    # _public_base_url() already prefers the explicit RVM_PUBLIC_BASE_URL (set to
+    # https://formloop.app) over request.base_url, but force the scheme here too
+    # as a hard guarantee — this URL is sent to an external service (Modal), so
+    # it can never be allowed to end up as plain http.
     progress_callback_url = f"{public_base}/api/v1/matte/progress-callback/{job_id}"
+    if progress_callback_url.startswith("http://"):
+        progress_callback_url = "https://" + progress_callback_url[len("http://"):]
     _set_job_state(
         job_id,
         status="queued",
