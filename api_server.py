@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -1018,6 +1019,17 @@ def _get_job_state(job_id: str) -> dict | None:
         return dict(st) if st else None
 
 
+def _bump_progress(job_id: str, pct: int, message: str) -> None:
+    """Set progress, but never let it go backward. Modal-path only — its progress
+    callbacks arrive over the network out of the main request/response flow (and,
+    for sub-progress, from a fire-and-forget background thread), so delivery order
+    isn't guaranteed. Clamping here is what makes the bar strictly monotonic even
+    if a slightly-stale callback lands after a newer one."""
+    existing = _get_job_state(job_id) or {}
+    cur = int(existing.get("progress") or 0)
+    _set_job_state(job_id, status="running", progress=max(cur, int(pct)), message=message)
+
+
 def _build_result_body(base_url: str, job_id: str, *, gif_width: int, effective_formats: str, premium: bool, model: str) -> dict:
     def u(name: str) -> str | None:
         p = OUTPUTS_DIR / job_id / name
@@ -1480,7 +1492,7 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
     if gif_remote or webm_remote:
         await asyncio.to_thread(_ensure_job_assets_from_client_urls, job_dir, gif_remote, webm_remote)
     try:
-        _ensure_webm_for_job(job_dir)
+        await asyncio.to_thread(_ensure_webm_for_job, job_dir)
         if not owner:
             write_job_owner(job_id, uid)
         mark_job_saved(job_id)
@@ -1514,21 +1526,41 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
                 # Prefer local file (watermarked) over remote URL to avoid self-fetch issues.
                 # Fall back to remote URL only when no local file is present (e.g. Firebase-only job).
                 if gif_path.is_file():
-                    urls = await asyncio.to_thread(
-                        upload_user_export_media,
-                        uid=uid,
-                        export_id=export_id,
-                        gif_path=gif_path,
-                        webm_path=webm_path if webm_path.is_file() else None,
-                    )
+                    try:
+                        urls = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                upload_user_export_media,
+                                uid=uid,
+                                export_id=export_id,
+                                gif_path=gif_path,
+                                webm_path=webm_path if webm_path.is_file() else None,
+                            ),
+                            timeout=60,
+                        )
+                    except asyncio.TimeoutError:
+                        out["storageError"] = (
+                            "Library upload is taking longer than expected; your export was processed "
+                            "but may not appear in your library yet. Try again shortly."
+                        )
+                        urls = None
                 elif gif_remote and gif_remote.startswith(("http://", "https://")):
-                    urls = await asyncio.to_thread(
-                        upload_user_export_media_from_urls,
-                        uid=uid,
-                        export_id=export_id,
-                        gif_url=gif_remote,
-                        webm_url=webm_remote if webm_remote and webm_remote.startswith(("http://", "https://")) else None,
-                    )
+                    try:
+                        urls = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                upload_user_export_media_from_urls,
+                                uid=uid,
+                                export_id=export_id,
+                                gif_url=gif_remote,
+                                webm_url=webm_remote if webm_remote and webm_remote.startswith(("http://", "https://")) else None,
+                            ),
+                            timeout=60,
+                        )
+                    except asyncio.TimeoutError:
+                        out["storageError"] = (
+                            "Library upload is taking longer than expected; your export was processed "
+                            "but may not appear in your library yet. Try again shortly."
+                        )
+                        urls = None
                 else:
                     out["storageError"] = (
                         "Could not upload to Firebase: no gif_url in this save request. "
@@ -1696,10 +1728,14 @@ def _modal_prepare_input(
     rotation: int = 0,
     loop_style: str = "normal",
     use_sam2: bool = False,
+    progress_callback_url: str | None = None,
+    progress_token: str | None = None,
 ) -> dict:
     """Duplicated from _runpod_submit's video-prep steps (trim/rotate/upload) so the
     RunPod path above is never touched. Builds the same input payload shape RunPod
-    sends, since the Modal endpoint accepts the identical contract."""
+    sends, since the Modal endpoint accepts the identical contract. progress_callback_url/
+    progress_token are extra fields RunPod's handler.py never receives/reads — additive
+    only, no effect on the RunPod path."""
     exercise_name = Path(filename or f"clip_{uuid.uuid4().hex[:8]}.mp4").stem[:120]
     suffix = Path(filename or "upload.mp4").suffix.lower()
     if suffix not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
@@ -1751,6 +1787,8 @@ def _modal_prepare_input(
         "end_time": float(end_time) if end_time else None,
         "loop_style": loop_style,
         "use_sam2": bool(use_sam2),
+        "progress_callback_url": progress_callback_url,
+        "progress_token": progress_token,
     }
 
 
@@ -1776,7 +1814,15 @@ async def _run_modal_job_async(
     RunPod. The Modal call is synchronous (blocks until the GIF/WebM is ready), so it
     runs in a background thread via asyncio.to_thread — matte_video_start still
     returns job_id immediately and the frontend keeps polling /matte/progress as usual."""
-    _set_job_state(job_id, status="queued", progress=0, message="Preparing clip for Modal...")
+    progress_token = secrets.token_urlsafe(24)
+    progress_callback_url = f"{public_base}/api/v1/matte/progress-callback/{job_id}"
+    _set_job_state(
+        job_id,
+        status="queued",
+        progress=1,
+        message="Preparing clip for Modal...",
+        progress_token=progress_token,
+    )
     try:
         modal_input = await asyncio.to_thread(
             _modal_prepare_input,
@@ -1792,10 +1838,10 @@ async def _run_modal_job_async(
             rotation=rotation,
             loop_style=loop_style,
             use_sam2=use_sam2,
+            progress_callback_url=progress_callback_url,
+            progress_token=progress_token,
         )
-        _set_job_state(
-            job_id, status="running", progress=10, message="Processing on Modal (A10 GPU)..."
-        )
+        _bump_progress(job_id, 2, "Processing on Modal (A10 GPU)...")
 
         def _call_modal() -> dict:
             resp = requests.post(
@@ -1821,7 +1867,7 @@ async def _run_modal_job_async(
             _set_job_state(job_id, status="failed", progress=100, message=msg, error=msg)
             return
 
-        _set_job_state(job_id, status="running", progress=92, message="Downloading results...")
+        _bump_progress(job_id, 99, "Downloading results...")
         payload = {"output": modal_result}
         try:
             await asyncio.wait_for(
@@ -1837,7 +1883,7 @@ async def _run_modal_job_async(
                 _fetch_remote_asset_if_missing, webm_remote_url, webm_dest, min_size=256, timeout=45
             )
             print(f"[Job] Modal webm mirror {'OK' if mirrored else 'FAILED'} -> {webm_dest}", flush=True)
-        _set_job_state(job_id, status="running", progress=96, message="Almost ready...")
+        _bump_progress(job_id, 99, "Almost ready...")
 
         if uid:
             try:
@@ -2354,6 +2400,54 @@ async def matte_video_progress(job_id: str) -> JSONResponse:
     if status == "failed":
         body["error"] = str(state.get("error") or message)
     return JSONResponse(body)
+
+
+_PROGRESS_STAGE_LABELS = {
+    "upload": "Uploading",
+    "matting": "Matting",
+    "compositing": "Compositing",
+    "encoding": "Encoding",
+    "finalizing": "Finalizing",
+}
+
+
+@app.post("/api/v1/matte/progress-callback/{job_id}")
+async def matte_progress_callback(job_id: str, request: Request) -> JSONResponse:
+    """Best-effort milestone-progress callback, called by the Modal worker only
+    (RunPod's handler.py has no equivalent and never calls this). Not part of any
+    user-facing contract — auth is a per-job random token minted in
+    _run_modal_job_async and never exposed to the browser."""
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid JSON body") from None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+
+    state = _get_job_state(job_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    token = str(body.get("token") or "")
+    expected_token = str(state.get("progress_token") or "")
+    if not expected_token or not secrets.compare_digest(token, expected_token):
+        raise HTTPException(status_code=403, detail="invalid progress token")
+
+    if str(state.get("status") or "") not in {"queued", "running"}:
+        return JSONResponse({"ok": False, "reason": "job not running"})
+
+    stage = str(body.get("stage") or "").strip().lower()
+    label = _PROGRESS_STAGE_LABELS.get(stage, stage.title() or "Processing")
+    try:
+        pct = int(body.get("pct") or 0)
+    except (TypeError, ValueError):
+        pct = 0
+    pct = max(0, min(100, pct))
+
+    _bump_progress(job_id, pct, label)
+    return JSONResponse({"ok": True})
 
 
 @app.post("/api/v1/matte/cancel/{job_id}")
