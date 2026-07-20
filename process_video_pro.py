@@ -766,8 +766,19 @@ def run_pipeline(args: argparse.Namespace) -> None:
         gif_fps=actual_gif_fps,
         max_frames=max_gif,
     )
+    # Write at the fps the KEPT frames actually need to span true_duration, not
+    # the raw requested actual_gif_fps. When _decimate_frames_for_gif's target
+    # branch fires, len(gif_src) ≈ round(true_duration * actual_gif_fps), so
+    # this comes out ≈ actual_gif_fps anyway. But when too few frames exist to
+    # hit the requested fps without dropping more of them (early-return branch:
+    # n <= target — e.g. a high gif_fps on a clip too short/pre-thinned to
+    # sustain it), gif_src keeps every available frame as-is; writing those at
+    # the higher requested fps compresses playback below true_duration. Deriving
+    # write fps from the actual kept-frame count instead makes both branches
+    # correct with one formula: playback duration == true_duration always.
+    gif_write_fps = max(1, int(round(len(gif_src) / true_duration))) if gif_src else actual_gif_fps
     _report("encoding", 89)
-    frames_to_gif(gif_src, Path(args.gif).resolve(), actual_gif_fps, int(args.gif_width))
+    frames_to_gif(gif_src, Path(args.gif).resolve(), gif_write_fps, int(args.gif_width))
     _report("encoding", 92)
     print(f"[Pipeline] done in {time.time() - start_time:.2f}s", flush=True)
 
