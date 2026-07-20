@@ -176,14 +176,12 @@ def _rgba_from_bgr_and_alpha(frame_bgr: np.ndarray, alpha_u8: np.ndarray) -> np.
 def _decimate_frames_for_gif(
     frames: list[np.ndarray],
     *,
-    video_fps: float,
+    duration: float,
     gif_fps: int,
     max_frames: int,
 ) -> list[np.ndarray]:
     if len(frames) <= 2:
         return frames
-    vf = max(0.001, float(video_fps))
-    duration = len(frames) / vf
     target = min(max_frames, max(2, int(round(duration * max(1, gif_fps)))))
     n = len(frames)
     if n <= target:
@@ -305,6 +303,7 @@ def get_sam2_mask(
     frames_bgr: list[np.ndarray],
     device: torch.device,
     yolo_box: tuple[float, float, float, float] | None = None,
+    progress_cb=None,
 ) -> list[np.ndarray]:
     """Use the SAM2 video predictor to get a temporally consistent person mask
     across all frames. Prompts frame 0 with a YOLO box if available, otherwise
@@ -343,12 +342,36 @@ def get_sam2_mask(
             )
 
         masks: list[np.ndarray | None] = [None] * len(frames_bgr)
-        for out_frame_idx, _out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
+        total = max(1, len(frames_bgr))
+        # Sub-progress within the "matting" stage (5-80%) — this loop is ~75% of
+        # total pipeline time in SAM2 mode, so it owns the biggest slice of the
+        # bar. Emit on every integer-percent change rather than a fixed frame
+        # stride: self-adjusting to clip length, gives ~1 update per 1-2% of
+        # frames for typical clips, and guarantees at least one update even for
+        # very short clips (a handful of frames still crosses several percent
+        # points).
+        _last_pct = [4]
+
+        def _emit(step: int) -> None:
+            if progress_cb is None:
+                return
+            pct = 5 + int(75 * min(1.0, step / total))
+            if pct > _last_pct[0]:
+                _last_pct[0] = pct
+                try:
+                    progress_cb("matting", pct)
+                except Exception:
+                    pass
+
+        for step, (out_frame_idx, _out_obj_ids, out_mask_logits) in enumerate(
+            predictor.propagate_in_video(inference_state)
+        ):
             mask = (out_mask_logits[0] > 0.0).cpu().numpy()
             if mask.ndim != 2:
                 mask = mask.reshape(mask.shape[-2], mask.shape[-1])
             if 0 <= out_frame_idx < len(masks):
                 masks[out_frame_idx] = (mask.astype(np.uint8) * 255)
+            _emit(step)
 
         # Fill any frame SAM2 didn't propagate to with the nearest available mask.
         last = None
@@ -373,15 +396,39 @@ def _run_birefnet_yolo_pass(
     oh: int,
     fg_writer,
     a_writer,
-) -> list[np.ndarray]:
+    progress_cb=None,
+    total_frames: int | None = None,
+) -> tuple[list[np.ndarray], int]:
     """BiRefNet alpha + YOLO union mask pipeline (the original/default pipeline,
-    used when SAM2 is not requested or as a fallback if SAM2 fails)."""
+    used when SAM2 is not requested or as a fallback if SAM2 fails).
+
+    Returns (gif_frames, frames_processed) — frames_processed is the actual
+    count of source frames consumed, used by the caller to compute the true
+    source-clip duration (frame count from container metadata can be wrong)."""
     gif_frames: list[np.ndarray] = []
     last_rvm_alpha: np.ndarray | None = None
     last_yolo_mask_small: np.ndarray | None = None
     last_yolo_results = None
     frame_idx = 0
+    # No separate compositing stage in this pipeline (matting and compositing
+    # are the same loop), so this one loop spans the full 5-88% "matting" band —
+    # same integer-percent-change technique as the SAM2 loops.
+    _byp_total = max(1, int(total_frames) if total_frames else 0)
+    _byp_last_pct = [4]
+
+    def _emit_byp(step: int) -> None:
+        if progress_cb is None or _byp_total <= 0:
+            return
+        pct = 5 + int(83 * min(1.0, step / _byp_total))
+        if pct > _byp_last_pct[0]:
+            _byp_last_pct[0] = pct
+            try:
+                progress_cb("matting", pct)
+            except Exception:
+                pass
+
     for frame in frame_source:
+        _emit_byp(frame_idx)
         frame_idx += 1
         frame_small, _scale = resize_for_inference(frame)
 
@@ -453,7 +500,7 @@ def _run_birefnet_yolo_pass(
         if frame_idx % 2 == 0:
             gif_frames.append(rgba)
 
-    return gif_frames
+    return gif_frames, frame_idx
 
 
 def _run_sam2_pipeline(
@@ -468,15 +515,18 @@ def _run_sam2_pipeline(
     oh: int,
     fg_writer,
     a_writer,
-) -> list[np.ndarray]:
+    progress_cb=None,
+) -> tuple[list[np.ndarray], int]:
     """SAM2 + BiRefNet pipeline. SAM2 supplies a temporally-consistent person
     silhouette (used as the crop boundary in place of YOLO's union mask);
     BiRefNet still supplies the soft alpha edge detail. final = BiRefNet_alpha
     AND SAM2_mask (intersection), then the same edge-quality chain as the
     default pipeline (blur/unsharp/levels/threshold).
+
+    Returns (gif_frames, frames_processed) — see _run_birefnet_yolo_pass.
     """
     if not frames_small_buffer:
-        return []
+        return [], 0
 
     # Run YOLO once on frame 0 only, to get a box prompt for SAM2.
     yolo_box: tuple[float, float, float, float] | None = None
@@ -491,14 +541,29 @@ def _run_sam2_pipeline(
     except Exception as e:
         print(f"[SAM2] YOLO first-frame box detection failed: {e}", flush=True)
 
-    sam2_masks_small = get_sam2_mask(frames_small_buffer, device, yolo_box=yolo_box)
+    sam2_masks_small = get_sam2_mask(frames_small_buffer, device, yolo_box=yolo_box, progress_cb=progress_cb)
 
     gif_frames: list[np.ndarray] = []
     last_rvm_alpha: np.ndarray | None = None
     frame_idx = 0
+    _comp_total = max(1, len(frames_buffer))
+    _comp_last_pct = [79]
+
+    def _emit_compositing(step: int) -> None:
+        if progress_cb is None:
+            return
+        pct = 80 + int(8 * min(1.0, step / _comp_total))
+        if pct > _comp_last_pct[0]:
+            _comp_last_pct[0] = pct
+            try:
+                progress_cb("compositing", pct)
+            except Exception:
+                pass
+
     for i, frame in enumerate(frames_buffer):
         frame_idx += 1
         frame_small = frames_small_buffer[i]
+        _emit_compositing(i)
 
         if frame_idx % 3 == 1 or last_rvm_alpha is None:
             rvm_alpha_small = get_rvm_alpha(frame_small, birefnet, device, transform_img)
@@ -549,12 +614,25 @@ def _run_sam2_pipeline(
         if frame_idx % 2 == 0:
             gif_frames.append(rgba)
 
-    return gif_frames
+    return gif_frames, frame_idx
 
 
 def run_pipeline(args: argparse.Namespace) -> None:
     start_time = time.time()
     print("[Pipeline] start processing", flush=True)
+    # Additive, optional milestone-progress hook — only set by the Modal path
+    # (modal_app.py). RunPod's handler.py never sets this, so getattr(..., None)
+    # keeps RunPod behavior byte-for-byte unchanged.
+    progress_cb = getattr(args, "progress_cb", None)
+
+    def _report(stage: str, pct: int) -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(stage, pct)
+        except Exception:
+            pass
+
     inp = Path(args.input).resolve()
     if not inp.is_file():
         raise SystemExit(f"input not found: {inp}")
@@ -590,17 +668,28 @@ def run_pipeline(args: argparse.Namespace) -> None:
     if not cap.isOpened():
         raise SystemExit(f"cannot open video: {inp}")
     source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    out_fps = 12.0
+    # fg/alpha writers keep every source frame 1:1 (no decimation below), so
+    # writing them at the real source fps makes the resulting foreground/alpha
+    # mp4s (and therefore the muxed WebM) play back at the true clip duration.
+    # Previously hardcoded to 12.0, which desynced WebM duration from the
+    # source whenever source_fps != 12 (see modal_app.py/handler.py's
+    # _mux_webm_alpha, which mirrors this value via ns.out_fps).
+    out_fps = float(source_fps)
     ow = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     oh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     fg_writer = _writer(Path(args.fg).resolve(), out_fps, ow, oh, gray=False) if args.fg else None
     a_writer = _writer(Path(args.alpha).resolve(), out_fps, ow, oh, gray=False) if args.alpha else None
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    # Read back by handler.py/modal_app.py after run_pipeline() returns, so the
+    # WebM mux's ffmpeg -r matches what the fg/alpha mp4s were actually written at.
+    args.out_fps = out_fps
 
     gif_frames: list[np.ndarray] = []
     try:
         if use_sam2:
             print("[Pipeline] mode: SAM2 + BiRefNet", flush=True)
+            _report("matting", 5)
             # SAM2 needs the whole clip up front for video mask propagation.
             # These clips are a few seconds, so buffering them in memory is cheap.
             frames_buffer: list[np.ndarray] = []
@@ -615,22 +704,25 @@ def run_pipeline(args: argparse.Namespace) -> None:
             cap.release()
 
             try:
-                gif_frames = _run_sam2_pipeline(
+                gif_frames, frames_processed = _run_sam2_pipeline(
                     frames_buffer, frames_small_buffer,
                     birefnet=birefnet, device=device, transform_img=transform_img,
                     yolo_model=yolo_model, ow=ow, oh=oh,
                     fg_writer=fg_writer, a_writer=a_writer,
+                    progress_cb=progress_cb,
                 )
             except Exception as e:
                 print(f"[SAM2] pipeline failed, falling back to BiRefNet + YOLO: {e}", flush=True)
-                gif_frames = _run_birefnet_yolo_pass(
+                gif_frames, frames_processed = _run_birefnet_yolo_pass(
                     iter(frames_buffer),
                     birefnet=birefnet, device=device, transform_img=transform_img,
                     yolo_model=yolo_model, ow=ow, oh=oh,
                     fg_writer=fg_writer, a_writer=a_writer,
+                    progress_cb=progress_cb, total_frames=len(frames_buffer),
                 )
         else:
             print("[Pipeline] mode: BiRefNet + YOLO", flush=True)
+            _report("matting", 5)
 
             def _cap_frames():
                 while True:
@@ -639,11 +731,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
                         return
                     yield frame
 
-            gif_frames = _run_birefnet_yolo_pass(
+            gif_frames, frames_processed = _run_birefnet_yolo_pass(
                 _cap_frames(),
                 birefnet=birefnet, device=device, transform_img=transform_img,
                 yolo_model=yolo_model, ow=ow, oh=oh,
                 fg_writer=fg_writer, a_writer=a_writer,
+                progress_cb=progress_cb, total_frames=total_frames,
             )
     finally:
         cap.release()
@@ -652,15 +745,30 @@ def run_pipeline(args: argparse.Namespace) -> None:
         if a_writer is not None:
             a_writer.release()
 
+    # Safety-net floor — harmless no-op if the loop-driven sub-progress above
+    # already reached 88 (the common case); guarantees this milestone even if a
+    # very short/edge-case clip never crossed it, since _bump_progress on the
+    # api_server side clamps upward.
+    _report("compositing", 88)
+
     actual_gif_fps = max(1, min(24, int(getattr(args, 'gif_fps', 12))))
     max_gif = max(24, int(os.environ.get("RVM_PRO_GIF_MAX_FRAMES", "280")))
+    # True source-clip duration, from the actual number of frames the matting
+    # pass consumed (not container frame-count metadata, which can be wrong)
+    # divided by real fps. gif_frames already reflects a 1-in-2 pre-thinning
+    # (see the `frame_idx % 2 == 0` keep above) — passing the real duration
+    # directly here (rather than re-deriving it from len(gif_frames) and a raw
+    # fps) is what keeps that pre-thinning from silently halving playback time.
+    true_duration = frames_processed / max(0.001, float(source_fps))
     gif_src = _decimate_frames_for_gif(
         gif_frames,
-        video_fps=float(source_fps),
+        duration=true_duration,
         gif_fps=actual_gif_fps,
         max_frames=max_gif,
     )
+    _report("encoding", 89)
     frames_to_gif(gif_src, Path(args.gif).resolve(), actual_gif_fps, int(args.gif_width))
+    _report("encoding", 92)
     print(f"[Pipeline] done in {time.time() - start_time:.2f}s", flush=True)
 
 

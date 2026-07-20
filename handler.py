@@ -78,8 +78,12 @@ def upload_to_firebase(local_path, dest_path, content_type):
         return None
 
 
-def _mux_webm_alpha(fg_mp4, alpha_mp4, out_webm):
-    """VP9 + alpha WebM with realtime settings."""
+def _mux_webm_alpha(fg_mp4, alpha_mp4, out_webm, fps=12):
+    """VP9 + alpha WebM with realtime settings. `fps` must match the fps the
+    fg/alpha mp4s were actually written at (process_video_pro.run_pipeline
+    sets this on ns.out_fps) so the muxed WebM's duration matches the source
+    clip instead of a stale hardcoded rate."""
+    fps_str = str(fps)
     fc = (
         "[0:v]format=rgb24[rgb];"
         "[1:v]format=gray,extractplanes=y[am];"
@@ -92,11 +96,11 @@ def _mux_webm_alpha(fg_mp4, alpha_mp4, out_webm):
         "-loglevel",
         "error",
         "-r",
-        "12",
+        fps_str,
         "-i",
         str(fg_mp4),
         "-r",
-        "12",
+        fps_str,
         "-i",
         str(alpha_mp4),
         "-filter_complex",
@@ -261,7 +265,7 @@ def handler(job):
         webm_url = None
         if os.path.isfile(fg_path) and os.path.isfile(alpha_path):
             try:
-                _mux_webm_alpha(fg_path, alpha_path, webm_path)
+                _mux_webm_alpha(fg_path, alpha_path, webm_path, fps=getattr(ns, "out_fps", 12))
                 if os.path.isfile(webm_path) and os.path.getsize(webm_path) > 0:
                     webm_url = upload_to_firebase(
                         webm_path,
