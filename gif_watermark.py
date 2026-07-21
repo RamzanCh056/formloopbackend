@@ -100,7 +100,7 @@ def apply_png_watermark_to_gif(gif_path: Path, watermark_png: Path) -> bool:
         "[0:v][wm]overlay=W-w-14:14[overlaid];"
         "[overlaid]split[a][b];"
         "[a]palettegen=reserve_transparent=1:transparency_color=000000[pal];"
-        "[b][pal]paletteuse=dither=none:diff_mode=rectangle"
+        "[b][pal]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle"
     )
     cmd = [
         "ffmpeg",
