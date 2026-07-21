@@ -238,19 +238,35 @@ def _process(job_input: dict) -> dict:
     conf = job_input.get("conf", 0.20)
     use_sam2 = bool(job_input.get("use_sam2", False))
 
-    # Optional "keep this equipment" point (e.g. a plyo box, bench) for the
-    # SAM2 path — normalized [0,1] coordinates, relative to the source frame.
-    # Absent/invalid -> None, which keeps process_video_pro.py's SAM2 pipeline
-    # on its exact pre-existing single-object (person-only) path.
-    keep_point_raw = job_input.get("keep_point")
-    keep_point: tuple[float, float] | None = None
-    if isinstance(keep_point_raw, dict) and "x" in keep_point_raw and "y" in keep_point_raw:
+    # Optional "keep this equipment" point(s) (e.g. a plyo box, bench) for the
+    # SAM2 path — up to 2 normalized [0,1] coordinates, relative to the source
+    # frame. Absent/empty/invalid -> None, which keeps process_video_pro.py's
+    # SAM2 pipeline on its exact pre-existing single-object (person-only) path.
+    def _valid_point(p) -> tuple[float, float] | None:
+        if not isinstance(p, dict) or "x" not in p or "y" not in p:
+            return None
         try:
-            kx = max(0.0, min(1.0, float(keep_point_raw["x"])))
-            ky = max(0.0, min(1.0, float(keep_point_raw["y"])))
-            keep_point = (kx, ky)
+            kx = max(0.0, min(1.0, float(p["x"])))
+            ky = max(0.0, min(1.0, float(p["y"])))
+            return (kx, ky)
         except (TypeError, ValueError):
-            keep_point = None
+            return None
+
+    keep_points_raw = job_input.get("keep_points")
+    keep_points: list[tuple[float, float]] = []
+    if isinstance(keep_points_raw, list):
+        for p in keep_points_raw[:2]:
+            v = _valid_point(p)
+            if v is not None:
+                keep_points.append(v)
+    else:
+        # Backward-compat: older clients (or the already-shipped single-point
+        # feature) may still send singular "keep_point" — treat it as a
+        # one-element list rather than requiring every caller to migrate at once.
+        legacy_point = _valid_point(job_input.get("keep_point"))
+        if legacy_point is not None:
+            keep_points.append(legacy_point)
+    keep_points_or_none: list[tuple[float, float]] | None = keep_points or None
 
     force_fast = os.environ.get("RVM_FORCE_FAST_MODE", "0").strip().lower() not in {"0", "false", "no"}
     pro_fast_raw = job_input.get("pro_fast_mode")
@@ -322,7 +338,7 @@ def _process(job_input: dict) -> dict:
             no_rvm=False,
             no_yolo=bool(pro_fast_mode),
             use_sam2=use_sam2,
-            keep_point=keep_point,
+            keep_points=keep_points_or_none,
             progress_cb=_report_progress if progress_callback_url else None,
         )
         prev_wb = os.environ.get("RVM_PRO_GIF_WHITE_BG")

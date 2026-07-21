@@ -304,29 +304,31 @@ def get_sam2_mask(
     device: torch.device,
     yolo_box: tuple[float, float, float, float] | None = None,
     progress_cb=None,
-    keep_point: tuple[float, float] | None = None,
+    keep_points: list[tuple[float, float]] | None = None,
 ) -> tuple[list[np.ndarray], list[np.ndarray] | None]:
     """Use the SAM2 video predictor to get a temporally consistent person mask
     across all frames. Prompts frame 0 with a YOLO box if available, otherwise
     a center point, then propagates through the rest of the clip.
 
-    keep_point: optional normalized (x, y) in [0, 1], relative to this
-    function's own frame size (frames_bgr[0].shape). When provided, a SECOND
-    SAM2 object (obj_id=2) is prompted at that point — e.g. a piece of
-    equipment to keep in the cutout alongside the person (obj_id=1). When None
-    (the default), only obj_id=1 is ever added, so the mask-combination loop
-    below degenerates to exactly one object per frame, identical to the
-    pre-existing single-object behavior.
+    keep_points: optional list of up to 2 normalized (x, y) points in [0, 1],
+    relative to this function's own frame size (frames_bgr[0].shape). Each
+    point gets its OWN SAM2 object (obj_id=2, 3, ...) — e.g. two pieces of
+    equipment to keep in the cutout alongside the person (obj_id=1). When
+    None or empty (the default), no extra objects are ever added, so the
+    mask-combination loop below degenerates to exactly one object per frame,
+    identical to the pre-existing single-object behavior. A single-point list
+    behaves exactly as the original one-equipment-object feature did.
 
     Returns (masks, equipment_masks):
       masks: per-frame union mask (0/255 uint8) of every tracked object — used
         as before for the SAM2-confident crop boundary.
-      equipment_masks: per-frame mask (0/255 uint8) of ONLY the equipment
-        object (obj_id=2), or None when keep_point is None. Callers need this
-        separately from the union because BiRefNet (a person-only saliency
-        model) has no usable alpha signal for arbitrary equipment — the
-        equipment region needs its own flat alpha rather than being routed
-        through BiRefNet's per-pixel value like the person region is.
+      equipment_masks: per-frame mask (0/255 uint8) of the UNION of every
+        equipment object (obj_id 2, 3, ...), or None when keep_points is
+        None/empty. Callers need this separately from the union because
+        BiRefNet (a person-only saliency model) has no usable alpha signal
+        for arbitrary equipment — the equipment region needs its own flat
+        alpha rather than being routed through BiRefNet's per-pixel value
+        like the person region is.
     """
     import tempfile
     import shutil
@@ -358,19 +360,22 @@ def get_sam2_mask(
                 obj_id=ann_obj_id, points=points, labels=labels,
             )
 
-        if keep_point is not None:
+        equipment_obj_ids: set[int] = set()
+        for idx, kp in enumerate((keep_points or [])[:2]):
+            obj_id = 2 + idx
+            equipment_obj_ids.add(obj_id)
             kp_px = np.array(
-                [[float(keep_point[0]) * w, float(keep_point[1]) * h]], dtype=np.float32,
+                [[float(kp[0]) * w, float(kp[1]) * h]], dtype=np.float32,
             )
             kp_labels = np.array([1], dtype=np.int32)
             predictor.add_new_points_or_box(
                 inference_state=inference_state, frame_idx=ann_frame_idx,
-                obj_id=2, points=kp_px, labels=kp_labels,
+                obj_id=obj_id, points=kp_px, labels=kp_labels,
             )
 
         masks: list[np.ndarray | None] = [None] * len(frames_bgr)
         equipment_masks: list[np.ndarray | None] | None = (
-            [None] * len(frames_bgr) if keep_point is not None else None
+            [None] * len(frames_bgr) if equipment_obj_ids else None
         )
         total = max(1, len(frames_bgr))
         # Sub-progress within the "matting" stage (5-80%) — this loop is ~75% of
@@ -397,23 +402,23 @@ def get_sam2_mask(
             predictor.propagate_in_video(inference_state)
         ):
             # Union across however many objects are tracked this frame (just
-            # obj_id=1 when keep_point is None — identical to the prior
-            # single-object `out_mask_logits[0]` behavior; obj_id=1 and 2 when
-            # a keep_point was provided).
+            # obj_id=1 when keep_points is None/empty — identical to the prior
+            # single-object `out_mask_logits[0]` behavior; obj_id=1 plus 2
+            # and/or 3 when one or two keep_points were provided).
             union_mask: np.ndarray | None = None
-            equip_mask: np.ndarray | None = None
+            equip_union: np.ndarray | None = None
             for oi, oid in enumerate(out_obj_ids):
                 m = (out_mask_logits[oi] > 0.0).cpu().numpy()
                 if m.ndim != 2:
                     m = m.reshape(m.shape[-2], m.shape[-1])
                 union_mask = m if union_mask is None else np.logical_or(union_mask, m)
-                if oid == 2:
-                    equip_mask = m
+                if oid in equipment_obj_ids:
+                    equip_union = m if equip_union is None else np.logical_or(equip_union, m)
             if 0 <= out_frame_idx < len(masks) and union_mask is not None:
                 masks[out_frame_idx] = (union_mask.astype(np.uint8) * 255)
             if equipment_masks is not None and 0 <= out_frame_idx < len(equipment_masks):
                 equipment_masks[out_frame_idx] = (
-                    (equip_mask.astype(np.uint8) * 255) if equip_mask is not None
+                    (equip_union.astype(np.uint8) * 255) if equip_union is not None
                     else np.zeros((h, w), dtype=np.uint8)
                 )
             _emit(step)
@@ -570,7 +575,7 @@ def _run_sam2_pipeline(
     fg_writer,
     a_writer,
     progress_cb=None,
-    keep_point: tuple[float, float] | None = None,
+    keep_points: list[tuple[float, float]] | None = None,
 ) -> tuple[list[np.ndarray], int]:
     """SAM2 + BiRefNet pipeline. SAM2 supplies a temporally-consistent person
     silhouette (used as the crop boundary in place of YOLO's union mask);
@@ -578,11 +583,12 @@ def _run_sam2_pipeline(
     AND SAM2_mask (intersection), then the same edge-quality chain as the
     default pipeline (blur/unsharp/levels/threshold).
 
-    keep_point: optional normalized (x, y) equipment point, passed straight
-    through to get_sam2_mask — see its docstring. When None, sam2_masks_small
-    below is exactly the person-only mask, unchanged from before this feature
-    existed; the union with a second (equipment) object, when present, already
-    happened inside get_sam2_mask, so no further combination is needed here.
+    keep_points: optional list of up to 2 normalized (x, y) equipment points,
+    passed straight through to get_sam2_mask — see its docstring. When
+    None/empty, sam2_masks_small below is exactly the person-only mask,
+    unchanged from before this feature existed; the union with the equipment
+    object(s), when present, already happened inside get_sam2_mask, so no
+    further combination is needed here.
 
     Returns (gif_frames, frames_processed) — see _run_birefnet_yolo_pass.
     """
@@ -604,7 +610,7 @@ def _run_sam2_pipeline(
 
     sam2_masks_small, equipment_masks_small = get_sam2_mask(
         frames_small_buffer, device, yolo_box=yolo_box, progress_cb=progress_cb,
-        keep_point=keep_point,
+        keep_points=keep_points,
     )
 
     gif_frames: list[np.ndarray] = []
@@ -656,14 +662,15 @@ def _run_sam2_pipeline(
             np.where(birefnet_confident, rvm_alpha * 0.8, 0),
         ).astype(np.float32)
 
-        # keep_point equipment object (e.g. a plyo box): BiRefNet has no usable
-        # alpha signal for arbitrary equipment (it's a person-saliency model),
-        # so its SAM2-confident region would otherwise collapse to ~0 despite
-        # being correctly tracked. Give it a flat full-alpha value instead,
-        # BEFORE the blur/unsharp/levels/threshold chain below so its edge
-        # gets the exact same smoothing treatment as the person's edges rather
-        # than a raw, unsmoothed binary SAM2 boundary. No-op (equipment_masks_small
-        # is None) whenever keep_point wasn't provided.
+        # keep_points equipment object(s) (e.g. a plyo box, up to 2): BiRefNet
+        # has no usable alpha signal for arbitrary equipment (it's a
+        # person-saliency model), so its SAM2-confident region would
+        # otherwise collapse to ~0 despite being correctly tracked. Give it a
+        # flat full-alpha value instead, BEFORE the blur/unsharp/levels/
+        # threshold chain below so its edge gets the exact same smoothing
+        # treatment as the person's edges rather than a raw, unsmoothed
+        # binary SAM2 boundary. No-op (equipment_masks_small is None)
+        # whenever keep_points wasn't provided.
         if equipment_masks_small is not None:
             equip_mask_small = (
                 equipment_masks_small[i] if i < len(equipment_masks_small) else equipment_masks_small[-1]
@@ -790,7 +797,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     yolo_model=yolo_model, ow=ow, oh=oh,
                     fg_writer=fg_writer, a_writer=a_writer,
                     progress_cb=progress_cb,
-                    keep_point=getattr(args, "keep_point", None),
+                    keep_points=getattr(args, "keep_points", None),
                 )
             except Exception as e:
                 print(f"[SAM2] pipeline failed, falling back to BiRefNet + YOLO: {e}", flush=True)
