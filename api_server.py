@@ -1728,6 +1728,7 @@ def _modal_prepare_input(
     rotation: int = 0,
     loop_style: str = "normal",
     use_sam2: bool = False,
+    keep_points: list[dict] | None = None,
     progress_callback_url: str | None = None,
     progress_token: str | None = None,
 ) -> dict:
@@ -1776,7 +1777,7 @@ def _modal_prepare_input(
             f"Reason: {exc}"
         ) from exc
     fast = _pro_skip_yolo() if pro_fast_mode is None else bool(pro_fast_mode)
-    return {
+    payload = {
         "video_url": input_url,
         "exercise_name": exercise_name,
         "gif_width": int(gif_width),
@@ -1790,6 +1791,12 @@ def _modal_prepare_input(
         "progress_callback_url": progress_callback_url,
         "progress_token": progress_token,
     }
+    # Only added when non-empty — an absent key is what keeps modal_app.py's
+    # job_input.get("keep_points") default to None/off, same gate as every
+    # other optional field here (nothing new sent means nothing new happens).
+    if keep_points:
+        payload["keep_points"] = keep_points
+    return payload
 
 
 async def _run_modal_job_async(
@@ -1809,6 +1816,7 @@ async def _run_modal_job_async(
     rotation: int = 0,
     loop_style: str = "normal",
     use_sam2: bool = False,
+    keep_points: list[dict] | None = None,
 ) -> None:
     """Local-test-only path: routes processing to the Modal web endpoint instead of
     RunPod. The Modal call is synchronous (blocks until the GIF/WebM is ready), so it
@@ -1849,6 +1857,7 @@ async def _run_modal_job_async(
             rotation=rotation,
             loop_style=loop_style,
             use_sam2=use_sam2,
+            keep_points=keep_points,
             progress_callback_url=progress_callback_url,
             progress_token=progress_token,
         )
@@ -2197,7 +2206,37 @@ async def matte_video_start(
     rotation: int = Query(0, ge=0, le=270, description="Clockwise rotation degrees (0, 90, 180, 270)."),
     loop_style: str = Query("normal", description="Loop style: 'normal' or 'reverse' (boomerang)."),
     use_sam2: bool = Query(False, description="True = Ultra Quality (SAM2 + BiRefNet on RunPod). Slower, sharper edges."),
+    keep_points: str | None = Query(
+        None,
+        description="Optional JSON array of up to 2 {x,y} points in [0,1] marking equipment to keep in the "
+                    "SAM2 cutout (e.g. [{\"x\":0.8,\"y\":0.6}]). Absent/invalid -> feature off, Modal path unchanged.",
+    ),
 ) -> JSONResponse:
+    # Nested arrays don't fit this endpoint's scalar Query-param pattern, so the
+    # client sends a JSON-encoded string instead. Parsed defensively: any bad
+    # input (not JSON, not a list, points out of range) is treated the same as
+    # "not provided" rather than erroring the whole upload — this feature is
+    # SAM2-only and always optional, so failing open to "off" is the safe default.
+    keep_points_parsed: list[dict] | None = None
+    if keep_points:
+        try:
+            _kp_raw = json.loads(keep_points)
+            if isinstance(_kp_raw, list):
+                _kp_valid: list[dict] = []
+                for _p in _kp_raw[:2]:
+                    if (
+                        isinstance(_p, dict)
+                        and isinstance(_p.get("x"), (int, float))
+                        and isinstance(_p.get("y"), (int, float))
+                        and 0.0 <= float(_p["x"]) <= 1.0
+                        and 0.0 <= float(_p["y"]) <= 1.0
+                    ):
+                        _kp_valid.append({"x": float(_p["x"]), "y": float(_p["y"])})
+                if _kp_valid:
+                    keep_points_parsed = _kp_valid
+        except (json.JSONDecodeError, TypeError, ValueError):
+            keep_points_parsed = None
+
     if _runpod_only_mode() and not _runpod_enabled() and not _modal_enabled():
         raise HTTPException(
             status_code=503,
@@ -2296,6 +2335,7 @@ async def matte_video_start(
                 rotation=rotation,
                 loop_style=loop_style,
                 use_sam2=bool(use_sam2),
+                keep_points=keep_points_parsed,
             )
         )
         return JSONResponse(

@@ -430,6 +430,17 @@
               </button>
             </div>
           </div>
+          <div id="dash-keep-points-panel" class="hidden mt-3 rounded-lg border border-cyan-500/30 bg-cyan-500/[0.06] p-3">
+            <p class="text-[12px] font-semibold text-white">Keep equipment in cutout — optional</p>
+            <p class="mt-1 text-[11px] text-cyan-200">Tap up to 2 pieces of equipment (dumbbells, box) to keep them in the cutout (<span id="dash-keep-points-count">0</span>/2)</p>
+            <div class="relative mt-2">
+              <video id="dash-keep-points-video" class="w-full max-h-[40vh] rounded-xl border border-white/10 bg-black object-contain" playsinline muted></video>
+              <div id="dash-keep-points-overlay" class="absolute inset-0 cursor-crosshair"></div>
+            </div>
+            <div class="mt-2 flex justify-end">
+              <button id="dash-keep-points-clear" type="button" class="rounded-md px-2 py-1 text-[10px] font-semibold text-zinc-300 hover:bg-white/[0.05]">Clear</button>
+            </div>
+          </div>
           <p id="dash-save-warning" class="mt-2 text-[11px] text-amber-300/90 hidden">Saved locally in testing mode.</p>
           <div id="dash-progress-wrap" class="mt-3 hidden rounded-lg border border-white/10 bg-gradient-to-r from-indigo-500/[0.06] via-transparent to-cyan-500/[0.06] p-2.5">
             <div class="mb-1.5 flex items-center justify-between text-[11px] text-zinc-400">
@@ -1226,6 +1237,111 @@
     let selectedPlatform = null;
     let useSam2 = false;
     const renderModeBtns = document.querySelectorAll('.render-mode-btn');
+
+    // Equipment-keep points (Ultra/SAM2 only, Cutout step): up to 2 normalized
+    // {x,y} in [0,1], tapped on a dedicated still-frame preview that lives
+    // ONLY inside #dash-pane-cutout. Empty by default -- nothing is sent
+    // unless the user actually taps (see the keep_points query-param gating
+    // further down), so the Fast-mode / no-tap path is completely unaffected.
+    const keepPointsPanel = document.getElementById('dash-keep-points-panel');
+    const keepPointsVideo = document.getElementById('dash-keep-points-video');
+    const keepPointsOverlay = document.getElementById('dash-keep-points-overlay');
+    const keepPointsCountEl = document.getElementById('dash-keep-points-count');
+    const keepPointsClearBtn = document.getElementById('dash-keep-points-clear');
+    let keepPoints = [];
+
+    // Returns the displayed video-content rect (letterbox-aware) in
+    // overlay-local pixel coordinates, or null if metadata isn't loaded yet.
+    // Both the click handler and the marker renderer call this SAME function
+    // so they always agree on where the actual video pixels are -- using two
+    // separately-computed rects (e.g. one keyed to the content box, the other
+    // to the outer container box) is exactly what causes the marker to drift
+    // off from the tapped point.
+    const getKeepPointsContentRect = () => {
+      if (!keepPointsOverlay || !keepPointsVideo) return null;
+      const vw = keepPointsVideo.videoWidth;
+      const vh = keepPointsVideo.videoHeight;
+      if (!vw || !vh) return null;
+      const rect = keepPointsOverlay.getBoundingClientRect();
+      const elW = rect.width;
+      const elH = rect.height;
+      const videoAspect = vw / vh;
+      const elAspect = elW / elH;
+      let dispW, dispH, offX, offY;
+      if (videoAspect > elAspect) {
+        dispW = elW;
+        dispH = elW / videoAspect;
+        offX = 0;
+        offY = (elH - dispH) / 2;
+      } else {
+        dispH = elH;
+        dispW = elH * videoAspect;
+        offX = (elW - dispW) / 2;
+        offY = 0;
+      }
+      return { rect, elW, elH, dispW, dispH, offX, offY };
+    };
+
+    const renderKeepPointMarkers = () => {
+      if (!keepPointsOverlay) return;
+      keepPointsOverlay.querySelectorAll('.keep-point-marker').forEach((m) => m.remove());
+      const content = getKeepPointsContentRect();
+      keepPoints.forEach((p, i) => {
+        const marker = document.createElement('div');
+        marker.className = 'keep-point-marker absolute flex items-center justify-center rounded-full border-2 border-cyan-300 bg-cyan-400/40 text-[11px] font-bold text-cyan-950';
+        marker.style.width = '22px';
+        marker.style.height = '22px';
+        if (content) {
+          const px = content.offX + p.x * content.dispW;
+          const py = content.offY + p.y * content.dispH;
+          marker.style.left = `${px - 11}px`;
+          marker.style.top = `${py - 11}px`;
+        } else {
+          // Fallback (should not normally happen -- points are only ever
+          // stored once video metadata is loaded): position against the
+          // full overlay box rather than draw nothing.
+          marker.style.left = `calc(${p.x * 100}% - 11px)`;
+          marker.style.top = `calc(${p.y * 100}% - 11px)`;
+        }
+        marker.style.pointerEvents = 'none';
+        marker.textContent = String(i + 1);
+        keepPointsOverlay.appendChild(marker);
+      });
+      if (keepPointsCountEl) keepPointsCountEl.textContent = String(keepPoints.length);
+    };
+
+    const updateKeepPointsUi = () => {
+      const show = useSam2 && !!selectedFile;
+      if (keepPointsPanel) keepPointsPanel.classList.toggle('hidden', !show);
+      if (show && keepPointsVideo && objectUrl && keepPointsVideo.src !== objectUrl) {
+        keepPointsVideo.src = objectUrl;
+      }
+    };
+
+    if (keepPointsOverlay) {
+      keepPointsOverlay.addEventListener('click', (ev) => {
+        if (keepPoints.length >= 2 || !keepPointsVideo) return;
+        const content = getKeepPointsContentRect();
+        if (!content) return; // video metadata not loaded yet
+        const { rect, dispW, dispH, offX, offY } = content;
+        const clickX = ev.clientX - rect.left;
+        const clickY = ev.clientY - rect.top;
+        if (clickX < offX || clickX > offX + dispW || clickY < offY || clickY > offY + dispH) {
+          return; // tap landed in the letterbox padding, not on the actual frame
+        }
+        const nx = (clickX - offX) / dispW;
+        const ny = (clickY - offY) / dispH;
+        keepPoints.push({ x: Math.min(1, Math.max(0, nx)), y: Math.min(1, Math.max(0, ny)) });
+        renderKeepPointMarkers();
+      });
+    }
+    if (keepPointsClearBtn) {
+      keepPointsClearBtn.addEventListener('click', () => {
+        keepPoints = [];
+        renderKeepPointMarkers();
+      });
+    }
+
     const applySam2ModeUi = () => {
       renderModeBtns.forEach((b) => {
         const active = b.dataset.mode === (useSam2 ? 'ultra' : 'fast');
@@ -1241,6 +1357,7 @@
         if (sub) sub.classList.toggle('text-zinc-400', active);
         if (sub) sub.classList.toggle('text-zinc-500', !active);
       });
+      updateKeepPointsUi();
     };
     renderModeBtns.forEach((b) => {
       b.addEventListener('click', () => {
@@ -1763,6 +1880,11 @@
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       objectUrl = URL.createObjectURL(file);
       [previewVideo, trimVideo].forEach((v) => { if (v) v.src = objectUrl; });
+      // A new clip invalidates any previously-tapped equipment points (they
+      // were coordinates on the OLD clip's frame).
+      keepPoints = [];
+      renderKeepPointMarkers();
+      updateKeepPointsUi();
       const onMeta = () => {
         const d = Number(previewVideo?.duration || 0);
         trimA = 0;
@@ -1918,6 +2040,7 @@
         if (trimA > 0) query.set('start_time', trimA.toFixed(2));
         if (trimB > 0 && trimB < clipDuration - 0.1) query.set('end_time', trimB.toFixed(2));
         if (videoRotation) query.set('rotation', String(videoRotation));
+        if (keepPoints.length > 0) query.set('keep_points', JSON.stringify(keepPoints));
         const res = await fetch(`/api/v1/matte/start?${query.toString()}`, {
           method: 'POST',
           body: fd,
