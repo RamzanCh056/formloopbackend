@@ -234,7 +234,7 @@ def frames_to_gif(rgba_frames: list[np.ndarray], path: str | Path, fps: int, wid
         subprocess.run([
             "ffmpeg", "-y", "-framerate", fps_str,
             "-i", pattern, "-i", palette,
-            "-lavfi", "paletteuse=dither=none:diff_mode=rectangle",
+            "-lavfi", "paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle",
             "-loop", "0",
             str(path),
         ], check=True, capture_output=True)
