@@ -266,6 +266,10 @@ def list_user_exports_from_firestore(uid: str, limit: int | None = None) -> list
                 "created_at": (data.get("createdAt") or ""),
                 "tags": tags,
                 "platform": (data.get("platform") or "").strip() or None,
+                # Always present, default None -- absent/null means
+                # Uncategorized. Never used to drop a GIF from the listing.
+                "region_id": (data.get("regionId") or None),
+                "equipment_id": (data.get("equipmentId") or None),
             })
         def _sort_ts(r) -> float:
             v = r["created_at"]
@@ -294,6 +298,8 @@ def write_export_to_firestore(
     webm_url: str | None = None,
     title: str | None = None,
     platform: str | None = None,
+    region_id: str | None = None,
+    equipment_id: str | None = None,
 ) -> bool:
     """Write (or overwrite) a user's export document in Firestore users/{uid}/exports/{export_id}.
 
@@ -310,6 +316,9 @@ def write_export_to_firestore(
             "gifUrl": gif_url,
             "createdAt": datetime.now(timezone.utc),
             "customTags": [],
+            # Always present, default None -- absent/null means Uncategorized.
+            "regionId": region_id,
+            "equipmentId": equipment_id,
         }
         if webm_url:
             doc_data["webmUrl"] = webm_url
@@ -369,6 +378,289 @@ def delete_user_export_from_firestore(uid: str, job_id: str) -> bool:
     except Exception as exc:
         _log.warning("Firestore delete_user_export uid=%s job_id=%s: %s", uid, job_id, exc)
         return False
+
+
+_UNSET = object()  # sentinel: "field not provided" vs "explicitly set to null"
+
+# Seeded once per user, on first library access, only if they have zero
+# regions yet. Equipment names repeat per-region on purpose (locked design:
+# equipment is scoped PER region, e.g. "Upper Body > Bands" and
+# "Lower Body > Bands" are different subcategory docs) -- renaming/deleting
+# one never touches the other.
+_DEFAULT_LIBRARY_REGIONS = ["Upper Body", "Lower Body", "Full Body", "Core"]
+_DEFAULT_LIBRARY_EQUIPMENT = ["Kettlebells", "Bands", "Barbells", "Dumbbells", "Bodyweight"]
+
+
+def update_export_fields(
+    uid: str,
+    job_id: str,
+    *,
+    region_id: object = _UNSET,
+    equipment_id: object = _UNSET,
+    title: object = _UNSET,
+    tags: object = _UNSET,
+) -> bool:
+    """Update fields on an existing export doc, found by jobId (edit-export,
+    net new -- lets a user categorize/re-title/re-tag a GIF they already
+    saved). Only fields actually passed (not _UNSET) are written, so passing
+    region_id=None explicitly clears it (moves the GIF to Uncategorized)
+    without touching title/tags/equipment_id. Returns True if any doc was
+    updated, False if not found or Firebase isn't configured.
+    """
+    if not firebase_storage_ready():
+        return False
+    updates: dict = {}
+    if region_id is not _UNSET:
+        updates["regionId"] = region_id
+    if equipment_id is not _UNSET:
+        updates["equipmentId"] = equipment_id
+    if title is not _UNSET:
+        updates["title"] = (str(title).strip() or None) if title is not None else None
+    if tags is not _UNSET:
+        updates["customTags"] = [str(t).strip() for t in (tags or []) if str(t).strip()]
+    if not updates:
+        return False
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        col = db.collection("users").document(uid).collection("exports")
+        hits = list(col.where("jobId", "==", job_id).stream())
+        if not hits:
+            return False
+        updates["updatedAtServer"] = _fs.SERVER_TIMESTAMP
+        for snap in hits:
+            snap.reference.update(updates)
+        return True
+    except Exception as exc:
+        _log.warning("update_export_fields uid=%s job_id=%s: %s", uid, job_id, exc)
+        return False
+
+
+def list_library_categories(uid: str) -> list[dict]:
+    """Return this user's regions (each with its nested equipment
+    subcategories), sorted by `order`. Seeds the default region/equipment
+    set on first-ever access (i.e. only when the user has zero regions) --
+    never re-seeds afterward, even if they later delete everything, so an
+    intentional "delete all my categories" sticks.
+    """
+    if not firebase_storage_ready():
+        return []
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        regions_col = db.collection("users").document(uid).collection("libraryCategories")
+        region_snaps = list(regions_col.stream())
+        if not region_snaps:
+            _seed_default_library_categories(uid)
+            region_snaps = list(regions_col.stream())
+        regions = []
+        for rsnap in region_snaps:
+            rdata = rsnap.to_dict() or {}
+            sub_snaps = list(regions_col.document(rsnap.id).collection("subcategories").stream())
+            subs = sorted(
+                (
+                    {"id": s.id, "name": (s.to_dict() or {}).get("name") or "", "order": (s.to_dict() or {}).get("order") or 0}
+                    for s in sub_snaps
+                ),
+                key=lambda x: x["order"],
+            )
+            regions.append({
+                "id": rsnap.id,
+                "name": rdata.get("name") or "",
+                "order": rdata.get("order") or 0,
+                "equipment": subs,
+            })
+        regions.sort(key=lambda x: x["order"])
+        return regions
+    except Exception as exc:
+        _log.warning("list_library_categories uid=%s: %s", uid, exc)
+        return []
+
+
+def _seed_default_library_categories(uid: str) -> None:
+    from firebase_admin import firestore as _fs
+    from datetime import datetime, timezone
+    db = _fs.client()
+    regions_col = db.collection("users").document(uid).collection("libraryCategories")
+    now = datetime.now(timezone.utc)
+    for r_order, region_name in enumerate(_DEFAULT_LIBRARY_REGIONS):
+        region_ref = regions_col.document()
+        region_ref.set({"name": region_name, "order": r_order, "createdAt": now})
+        sub_col = region_ref.collection("subcategories")
+        for s_order, equip_name in enumerate(_DEFAULT_LIBRARY_EQUIPMENT):
+            sub_col.document().set({"name": equip_name, "order": s_order, "createdAt": now})
+
+
+def create_library_region(uid: str, name: str) -> dict | None:
+    if not firebase_storage_ready():
+        return None
+    try:
+        from firebase_admin import firestore as _fs
+        from datetime import datetime, timezone
+        db = _fs.client()
+        regions_col = db.collection("users").document(uid).collection("libraryCategories")
+        existing = list(regions_col.stream())
+        order = len(existing)
+        ref = regions_col.document()
+        ref.set({"name": (name or "").strip() or "Untitled", "order": order, "createdAt": datetime.now(timezone.utc)})
+        return {"id": ref.id, "name": (name or "").strip() or "Untitled", "order": order, "equipment": []}
+    except Exception as exc:
+        _log.warning("create_library_region uid=%s: %s", uid, exc)
+        return None
+
+
+def rename_library_region(uid: str, region_id: str, name: str) -> bool:
+    if not firebase_storage_ready():
+        return False
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        ref = db.collection("users").document(uid).collection("libraryCategories").document(region_id)
+        if not ref.get().exists:
+            return False
+        ref.update({"name": (name or "").strip() or "Untitled"})
+        return True
+    except Exception as exc:
+        _log.warning("rename_library_region uid=%s region_id=%s: %s", uid, region_id, exc)
+        return False
+
+
+def reorder_library_regions(uid: str, ordered_ids: list[str]) -> bool:
+    if not firebase_storage_ready():
+        return False
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        regions_col = db.collection("users").document(uid).collection("libraryCategories")
+        for order, region_id in enumerate(ordered_ids):
+            regions_col.document(region_id).update({"order": order})
+        return True
+    except Exception as exc:
+        _log.warning("reorder_library_regions uid=%s: %s", uid, exc)
+        return False
+
+
+def delete_library_region(uid: str, region_id: str) -> dict:
+    """Delete a region (and its subcategory docs). Any export referencing
+    this region (or an equipment subcategory scoped under it) is reassigned
+    to Uncategorized (regionId=None, equipmentId=None) -- GIFs are NEVER
+    deleted. Returns {"deleted": bool, "reassigned_count": int}.
+    """
+    result = {"deleted": False, "reassigned_count": 0}
+    if not firebase_storage_ready():
+        return result
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        region_ref = db.collection("users").document(uid).collection("libraryCategories").document(region_id)
+        if not region_ref.get().exists:
+            return result
+        # Reassign every export pointing at this region (equipment is scoped
+        # per-region, so clearing regionId must also clear equipmentId --
+        # an equipment id from a deleted region is meaningless without it).
+        exports_col = db.collection("users").document(uid).collection("exports")
+        hits = list(exports_col.where("regionId", "==", region_id).stream())
+        for snap in hits:
+            snap.reference.update({"regionId": None, "equipmentId": None})
+        result["reassigned_count"] = len(hits)
+        # Delete subcategory docs, then the region doc itself.
+        for sub in region_ref.collection("subcategories").stream():
+            sub.reference.delete()
+        region_ref.delete()
+        result["deleted"] = True
+        return result
+    except Exception as exc:
+        _log.warning("delete_library_region uid=%s region_id=%s: %s", uid, region_id, exc)
+        return result
+
+
+def create_library_equipment(uid: str, region_id: str, name: str) -> dict | None:
+    if not firebase_storage_ready():
+        return None
+    try:
+        from firebase_admin import firestore as _fs
+        from datetime import datetime, timezone
+        db = _fs.client()
+        region_ref = db.collection("users").document(uid).collection("libraryCategories").document(region_id)
+        if not region_ref.get().exists:
+            return None
+        sub_col = region_ref.collection("subcategories")
+        existing = list(sub_col.stream())
+        order = len(existing)
+        ref = sub_col.document()
+        ref.set({"name": (name or "").strip() or "Untitled", "order": order, "createdAt": datetime.now(timezone.utc)})
+        return {"id": ref.id, "name": (name or "").strip() or "Untitled", "order": order}
+    except Exception as exc:
+        _log.warning("create_library_equipment uid=%s region_id=%s: %s", uid, region_id, exc)
+        return None
+
+
+def rename_library_equipment(uid: str, region_id: str, sub_id: str, name: str) -> bool:
+    if not firebase_storage_ready():
+        return False
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        ref = (
+            db.collection("users").document(uid).collection("libraryCategories")
+            .document(region_id).collection("subcategories").document(sub_id)
+        )
+        if not ref.get().exists:
+            return False
+        ref.update({"name": (name or "").strip() or "Untitled"})
+        return True
+    except Exception as exc:
+        _log.warning("rename_library_equipment uid=%s region_id=%s sub_id=%s: %s", uid, region_id, sub_id, exc)
+        return False
+
+
+def reorder_library_equipment(uid: str, region_id: str, ordered_ids: list[str]) -> bool:
+    if not firebase_storage_ready():
+        return False
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        sub_col = (
+            db.collection("users").document(uid).collection("libraryCategories")
+            .document(region_id).collection("subcategories")
+        )
+        for order, sub_id in enumerate(ordered_ids):
+            sub_col.document(sub_id).update({"order": order})
+        return True
+    except Exception as exc:
+        _log.warning("reorder_library_equipment uid=%s region_id=%s: %s", uid, region_id, exc)
+        return False
+
+
+def delete_library_equipment(uid: str, region_id: str, sub_id: str) -> dict:
+    """Delete an equipment subcategory. Any export referencing it is
+    reassigned to Uncategorized-within-region (equipmentId=None; regionId is
+    left alone -- the region itself is still valid). GIFs are NEVER deleted.
+    Returns {"deleted": bool, "reassigned_count": int}.
+    """
+    result = {"deleted": False, "reassigned_count": 0}
+    if not firebase_storage_ready():
+        return result
+    try:
+        from firebase_admin import firestore as _fs
+        db = _fs.client()
+        sub_ref = (
+            db.collection("users").document(uid).collection("libraryCategories")
+            .document(region_id).collection("subcategories").document(sub_id)
+        )
+        if not sub_ref.get().exists:
+            return result
+        exports_col = db.collection("users").document(uid).collection("exports")
+        hits = list(exports_col.where("equipmentId", "==", sub_id).stream())
+        for snap in hits:
+            snap.reference.update({"equipmentId": None})
+        result["reassigned_count"] = len(hits)
+        sub_ref.delete()
+        result["deleted"] = True
+        return result
+    except Exception as exc:
+        _log.warning("delete_library_equipment uid=%s region_id=%s sub_id=%s: %s", uid, region_id, sub_id, exc)
+        return result
 
 
 def upload_runpod_input_video(*, job_id: str, filename: str, local_path: Path) -> str:

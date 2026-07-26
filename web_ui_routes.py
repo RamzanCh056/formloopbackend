@@ -202,6 +202,30 @@ def _scan_gifs(request: Request, limit: int | None = None) -> list[dict]:
     return items
 
 
+def _entry_sort_ts(created_at) -> float:
+    """Normalize any of the created_at shapes we hand around (Firestore
+    DatetimeWithNanoseconds, ISO string, raw epoch float/str, file mtime
+    float) into a single comparable epoch float, so items from all three
+    _user_gif_entries merge paths can be sorted against each other on equal
+    footing -- not just internally consistent within their own group."""
+    if hasattr(created_at, "timestamp"):
+        try:
+            return float(created_at.timestamp())
+        except (TypeError, ValueError):
+            return 0.0
+    try:
+        return float(created_at)
+    except (TypeError, ValueError):
+        pass
+    if isinstance(created_at, str) and created_at:
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 def _user_gif_entries(request: Request, limit: int | None = None) -> list[dict]:
     uid = request.session.get("user_id")
     if not uid:
@@ -217,6 +241,8 @@ def _user_gif_entries(request: Request, limit: int | None = None) -> list[dict]:
 
     seen: set[str] = {r["job_id"] for r in fs_rows}
     items: list[dict] = list(fs_rows)
+    for it in items:
+        it["_sort_ts"] = _entry_sort_ts(it.get("created_at"))
 
     # Merge local api_outputs/ scan — catches recent saves not yet written to Firestore
     rows = list_matte_gifs_for_owner(str(uid))
@@ -231,6 +257,14 @@ def _user_gif_entries(request: Request, limit: int | None = None) -> list[dict]:
                 "source_filename": None,
                 "gif_url": _gif_url(request, jid),
                 "webm_url": _webm_url(request, jid),
+                # No Firestore doc for this one yet -- always present,
+                # default None (Uncategorized), never used to drop the GIF.
+                "region_id": None,
+                "equipment_id": None,
+                # No createdAt yet either -- file mtime is the best available
+                # proxy so this item still sorts correctly against Firestore
+                # items instead of always landing after them.
+                "_sort_ts": _entry_sort_ts(row.get("mtime")),
             }
         )
     # Backward compatibility: older/manual jobs may miss `.owner`.
@@ -253,9 +287,18 @@ def _user_gif_entries(request: Request, limit: int | None = None) -> list[dict]:
                     "source_filename": None,
                     "gif_url": _gif_url(request, jid),
                     "webm_url": _webm_url(request, jid),
+                    "region_id": None,
+                    "equipment_id": None,
+                    "_sort_ts": _entry_sort_ts(p.stat().st_mtime),
                 }
             )
             seen.add(jid)
+
+    # One global sort across all three merge paths, newest first, BEFORE the
+    # limit truncation -- otherwise each group is only internally sorted and
+    # a brand-new disk/legacy item (not yet mirrored to Firestore) would
+    # always render after every Firestore item regardless of true recency.
+    items.sort(key=lambda it: it.get("_sort_ts") or 0.0, reverse=True)
     if limit is not None:
         items = items[:limit]
     return items

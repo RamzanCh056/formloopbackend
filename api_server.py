@@ -1468,6 +1468,8 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
     webm_remote = str(payload.get("webm_url") or "").strip() or None
     platform = str(payload.get("platform") or "").strip() or None
     title = str(payload.get("title") or "").strip() or None
+    region_id = str(payload.get("region_id") or "").strip() or None
+    equipment_id = str(payload.get("equipment_id") or "").strip() or None
     try:
         output_rotation = int(payload.get("output_rotation") or 0)
     except (TypeError, ValueError):
@@ -1584,6 +1586,8 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
                             webm_url=urls.get("webmUrl"),
                             platform=platform,
                             title=title,
+                            region_id=region_id,
+                            equipment_id=equipment_id,
                         )
                     except Exception:
                         _log.debug(
@@ -1594,6 +1598,167 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
             _log.exception("Firebase Storage upload failed job_id=%s export_id=%s", job_id, export_id)
             out["storageError"] = str(exc)
     return JSONResponse(out, headers={"X-FormLoop-Save-Flow": SAVE_FLOW_VERSION})
+
+
+# ---------------------------------------------------------------------------
+# Library categories (Region -> Equipment -> GIFs) -- Phase 1 backend only.
+# No frontend wiring yet; these are net-new endpoints for the customizable
+# library feature. Region/equipment CRUD lives in firebase_storage_admin.py;
+# these routes are thin session-auth + validation wrappers around it.
+# ---------------------------------------------------------------------------
+
+
+def _require_library_uid(request: Request) -> str:
+    uid = (request.session.get("user_id") or "").strip()
+    if not uid:
+        uid = (_uid_from_bearer(request) or "")
+        if uid:
+            request.session["user_id"] = uid
+    if not uid:
+        raise HTTPException(status_code=401, detail="Sign in required.")
+    return uid
+
+
+@app.get("/api/v1/library/categories")
+async def library_list_categories(request: Request) -> JSONResponse:
+    uid = _require_library_uid(request)
+    from firebase_storage_admin import list_library_categories
+    regions = await asyncio.to_thread(list_library_categories, uid)
+    return JSONResponse({"regions": regions})
+
+
+@app.post("/api/v1/library/categories")
+async def library_create_region(request: Request) -> JSONResponse:
+    uid = _require_library_uid(request)
+    body = await request.json()
+    name = str((body or {}).get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    from firebase_storage_admin import create_library_region
+    region = await asyncio.to_thread(create_library_region, uid, name)
+    if region is None:
+        raise HTTPException(status_code=503, detail="Library storage not configured")
+    return JSONResponse({"region": region})
+
+
+@app.patch("/api/v1/library/categories/{region_id}")
+async def library_rename_region(region_id: str, request: Request) -> JSONResponse:
+    uid = _require_library_uid(request)
+    body = await request.json()
+    name = str((body or {}).get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    from firebase_storage_admin import rename_library_region
+    ok = await asyncio.to_thread(rename_library_region, uid, region_id, name)
+    if not ok:
+        raise HTTPException(status_code=404, detail="region not found")
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/v1/library/categories/reorder")
+async def library_reorder_regions(request: Request) -> JSONResponse:
+    uid = _require_library_uid(request)
+    body = await request.json()
+    ordered_ids = (body or {}).get("ordered_ids")
+    if not isinstance(ordered_ids, list) or not all(isinstance(x, str) for x in ordered_ids):
+        raise HTTPException(status_code=400, detail="ordered_ids must be a list of region ids")
+    from firebase_storage_admin import reorder_library_regions
+    ok = await asyncio.to_thread(reorder_library_regions, uid, ordered_ids)
+    if not ok:
+        raise HTTPException(status_code=503, detail="Library storage not configured")
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/v1/library/categories/{region_id}")
+async def library_delete_region(region_id: str, request: Request) -> JSONResponse:
+    uid = _require_library_uid(request)
+    from firebase_storage_admin import delete_library_region
+    result = await asyncio.to_thread(delete_library_region, uid, region_id)
+    if not result.get("deleted"):
+        raise HTTPException(status_code=404, detail="region not found")
+    return JSONResponse(result)
+
+
+@app.post("/api/v1/library/categories/{region_id}/equipment")
+async def library_create_equipment(region_id: str, request: Request) -> JSONResponse:
+    uid = _require_library_uid(request)
+    body = await request.json()
+    name = str((body or {}).get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    from firebase_storage_admin import create_library_equipment
+    equip = await asyncio.to_thread(create_library_equipment, uid, region_id, name)
+    if equip is None:
+        raise HTTPException(status_code=404, detail="region not found")
+    return JSONResponse({"equipment": equip})
+
+
+@app.patch("/api/v1/library/categories/{region_id}/equipment/{sub_id}")
+async def library_rename_equipment(region_id: str, sub_id: str, request: Request) -> JSONResponse:
+    uid = _require_library_uid(request)
+    body = await request.json()
+    name = str((body or {}).get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    from firebase_storage_admin import rename_library_equipment
+    ok = await asyncio.to_thread(rename_library_equipment, uid, region_id, sub_id, name)
+    if not ok:
+        raise HTTPException(status_code=404, detail="equipment not found")
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/v1/library/categories/{region_id}/equipment/reorder")
+async def library_reorder_equipment(region_id: str, request: Request) -> JSONResponse:
+    uid = _require_library_uid(request)
+    body = await request.json()
+    ordered_ids = (body or {}).get("ordered_ids")
+    if not isinstance(ordered_ids, list) or not all(isinstance(x, str) for x in ordered_ids):
+        raise HTTPException(status_code=400, detail="ordered_ids must be a list of equipment ids")
+    from firebase_storage_admin import reorder_library_equipment
+    ok = await asyncio.to_thread(reorder_library_equipment, uid, region_id, ordered_ids)
+    if not ok:
+        raise HTTPException(status_code=503, detail="Library storage not configured")
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/v1/library/categories/{region_id}/equipment/{sub_id}")
+async def library_delete_equipment(region_id: str, sub_id: str, request: Request) -> JSONResponse:
+    uid = _require_library_uid(request)
+    from firebase_storage_admin import delete_library_equipment
+    result = await asyncio.to_thread(delete_library_equipment, uid, region_id, sub_id)
+    if not result.get("deleted"):
+        raise HTTPException(status_code=404, detail="equipment not found")
+    return JSONResponse(result)
+
+
+@app.patch("/api/v1/matte/export/{job_id}")
+async def library_edit_export(job_id: str, request: Request) -> JSONResponse:
+    """Edit an existing export's category/title/tags (net new -- lets a user
+    categorize a GIF they already saved, not just at save time)."""
+    uid = _require_library_uid(request)
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    body = await request.json()
+    body = body or {}
+    from firebase_storage_admin import update_export_fields
+    kwargs: dict = {}
+    if "region_id" in body:
+        kwargs["region_id"] = body.get("region_id")
+    if "equipment_id" in body:
+        kwargs["equipment_id"] = body.get("equipment_id")
+    if "title" in body:
+        kwargs["title"] = body.get("title")
+    if "tags" in body:
+        tags = body.get("tags")
+        if not isinstance(tags, list):
+            raise HTTPException(status_code=400, detail="tags must be a list")
+        kwargs["tags"] = tags
+    if not kwargs:
+        raise HTTPException(status_code=400, detail="no editable fields provided")
+    ok = await asyncio.to_thread(update_export_fields, uid, job_id, **kwargs)
+    if not ok:
+        raise HTTPException(status_code=404, detail="export not found")
+    return JSONResponse({"ok": True})
 
 
 async def _run_job_async(

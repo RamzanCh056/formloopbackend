@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}My GIFs — FormLoop{% endblock %}
+{% block title %}My Library — FormLoop{% endblock %}
 {% block content %}
 {% if guest_mode %}
 <div class="mb-5 sm:mb-6 relative overflow-hidden rounded-2xl border border-white/[0.06] bg-gradient-to-br from-violet-500/[0.08] via-transparent to-indigo-500/[0.05] px-4 py-3.5 sm:px-5">
@@ -17,7 +17,7 @@
   <header class="relative flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
     <div>
       <p class="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-400/90 mb-1.5">Library</p>
-      <h1 class="text-2xl sm:text-3xl font-bold text-white tracking-tight">My GIFs</h1>
+      <h1 class="text-2xl sm:text-3xl font-bold text-white tracking-tight">My Library</h1>
       <p class="mt-1.5 text-xs sm:text-sm text-zinc-500 max-w-md leading-snug">Open, download, or share.</p>
     </div>
     <div class="flex flex-wrap gap-2">
@@ -61,8 +61,18 @@
 {% else %}
 {% set all_tags = [] %}
 {% for it in items %}{% for t in (it.tags or []) %}{% if t not in all_tags %}{% set _ = all_tags.append(t) %}{% endif %}{% endfor %}{% endfor %}
+<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+  <div id="gifs-region-filter" class="flex flex-wrap items-center gap-1.5">
+    <button type="button" data-region="" class="region-btn rounded-full border border-indigo-500/50 bg-indigo-500/20 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-indigo-500/30">All</button>
+  </div>
+  <button type="button" id="gifs-manage-categories-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.1] bg-white/[0.04] px-2.5 py-1.5 text-[11px] font-semibold text-zinc-300 hover:bg-white/[0.08] hover:text-white transition">
+    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    Manage categories
+  </button>
+</div>
+<div id="gifs-equipment-filter" class="mb-3 hidden flex-wrap items-center gap-1.5"></div>
 <div id="gifs-tag-filter" class="mb-4 flex flex-wrap items-center gap-1.5">
-  <button type="button" data-tag="" class="tag-btn rounded-full border border-indigo-500/50 bg-indigo-500/20 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-indigo-500/30">All</button>
+  <button type="button" data-tag="" class="tag-btn rounded-full border border-indigo-500/50 bg-indigo-500/20 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-indigo-500/30">All tags</button>
   {% for t in all_tags %}
   <button type="button" data-tag="{{ t }}" class="tag-btn rounded-full border border-white/[0.1] bg-white/[0.04] px-3 py-1 text-[11px] font-semibold text-zinc-400 transition hover:bg-white/[0.08] hover:text-white">{{ t }}</button>
   {% endfor %}
@@ -72,7 +82,14 @@
 </div>
 <div id="gifs-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
   {% for it in items %}
-  <article data-tags="{{ (it.tags or []) | join(',') }}" class="group relative rounded-xl p-px bg-gradient-to-b from-white/[0.1] to-white/[0.02] hover:from-indigo-500/28 hover:to-violet-500/12 transition-all duration-300 shadow-card hover:shadow-glow flex flex-col">
+  <article
+    data-tags="{{ (it.tags or []) | join(',') }}"
+    data-region-id="{{ it.region_id or '' }}"
+    data-equipment-id="{{ it.equipment_id or '' }}"
+    data-title="{{ it.title or it.source_filename or '' }}"
+    data-job-id="{{ it.job_id }}"
+    data-default-format="{{ 'webm' if it.platform == 'webm' else 'gif' }}"
+    class="group relative rounded-xl p-px bg-gradient-to-b from-white/[0.1] to-white/[0.02] hover:from-indigo-500/28 hover:to-violet-500/12 transition-all duration-300 shadow-card hover:shadow-glow flex flex-col">
     <div class="rounded-[11px] bg-elevated/95 border border-white/[0.04] overflow-hidden flex flex-col h-full">
       <div class="relative aspect-[9/16] fl-alpha-checker overflow-hidden ring-1 ring-inset ring-white/[0.06]">
         <a href="{{ it.gif_url }}" target="_blank" rel="noopener" class="absolute inset-0 z-10 block">
@@ -93,15 +110,6 @@
         <div>
           <p class="text-xs font-semibold text-zinc-100 truncate" title="{{ it.source_filename or 'Clip' }}">{{ it.source_filename or 'Clip' }}</p>
           <p class="text-[9px] text-zinc-600 font-mono truncate mt-0.5 tracking-wide">{{ it.job_id[:10] }}…</p>
-          {% if it.platform %}
-          <span class="mt-1 inline-block rounded-full bg-indigo-500/15 border border-indigo-500/25 px-2 py-0.5 text-[9px] font-semibold text-indigo-300 tracking-wide">
-            {% if it.platform == 'powerpoint' %}📊 PowerPoint
-            {% elif it.platform == 'google-slides' %}📑 Google Slides
-            {% elif it.platform == 'keynote' %}🍎 Keynote
-            {% elif it.platform == 'canva' %}🎨 Canva
-            {% else %}🌐 Other{% endif %}
-          </span>
-          {% endif %}
         </div>
         <div class="flex flex-wrap gap-1.5 mt-auto">
           <button
@@ -135,6 +143,19 @@
           </a>
           {% endif %}
           {% if not guest_mode %}
+          <button
+            type="button"
+            data-edit-export="{{ it.job_id }}"
+            data-current-region="{{ it.region_id or '' }}"
+            data-current-equipment="{{ it.equipment_id or '' }}"
+            data-current-title="{{ it.source_filename or '' }}"
+            data-current-tags="{{ (it.tags or []) | join(',') }}"
+            title="Edit title, tags, and category"
+            class="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] px-2 py-1.5 text-[10px] font-semibold text-zinc-300 hover:text-white transition"
+          >
+            <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+            <span>Edit</span>
+          </button>
           <form method="post" action="/dashboard/gifs/{{ it.job_id }}/delete" class="inline" onsubmit="return confirm('Remove this GIF from your library?');">
             <button type="submit" title="Delete from library" class="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-semibold text-rose-400/90 hover:bg-rose-500/10 hover:text-rose-300 transition ring-1 ring-rose-500/15">
               <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
@@ -148,26 +169,374 @@
   </article>
   {% endfor %}
 </div>
+
+<!-- Edit-export modal: change title/tags/region/equipment on an existing GIF -->
+<div id="gifs-edit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+  <div class="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0c0c10] p-4 shadow-2xl">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-sm font-bold text-white">Edit GIF</h3>
+      <button type="button" id="gifs-edit-close" class="text-zinc-500 hover:text-white text-lg leading-none">&times;</button>
+    </div>
+    <div class="grid gap-2">
+      <input id="gifs-edit-title" type="text" maxlength="80" placeholder="Title" class="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-indigo-400/50" />
+      <input id="gifs-edit-tags" type="text" maxlength="160" placeholder="Tags (comma separated)" class="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white placeholder:text-zinc-600 outline-none focus:border-indigo-400/50" />
+      <select id="gifs-edit-region" class="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white outline-none focus:border-indigo-400/50">
+        <option value="">Region: Uncategorized</option>
+      </select>
+      <select id="gifs-edit-equipment" class="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white outline-none focus:border-indigo-400/50">
+        <option value="">Equipment: Uncategorized</option>
+      </select>
+    </div>
+    <div class="mt-4 flex justify-end gap-2">
+      <button type="button" id="gifs-edit-cancel" class="rounded-lg px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:text-white transition">Cancel</button>
+      <button type="button" id="gifs-edit-save" class="rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-md hover:from-indigo-500 hover:to-violet-500 transition">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Manage-categories modal: create/rename/reorder/delete regions + equipment -->
+<div id="gifs-manage-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+  <div class="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0c0c10] p-4 shadow-2xl">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-sm font-bold text-white">Manage categories</h3>
+      <button type="button" id="gifs-manage-close" class="text-zinc-500 hover:text-white text-lg leading-none">&times;</button>
+    </div>
+    <div id="gifs-manage-regions-list" class="grid gap-2"></div>
+    <button type="button" id="gifs-manage-add-region" class="mt-3 w-full rounded-lg border border-dashed border-white/15 px-3 py-2 text-xs font-semibold text-zinc-400 hover:text-white hover:border-white/30 transition">+ Add region</button>
+  </div>
+</div>
+
+<script src="/static/library.js"></script>
 <script>
 (function () {
-  const bar = document.getElementById('gifs-tag-filter');
-  if (!bar) return;
-  let active = '';
-  bar.addEventListener('click', (e) => {
-    const btn = e.target.closest('.tag-btn');
-    if (!btn) return;
-    active = btn.getAttribute('data-tag');
-    bar.querySelectorAll('.tag-btn').forEach((b) => {
-      const isActive = b.getAttribute('data-tag') === active;
-      b.className = isActive
-        ? 'tag-btn rounded-full border border-indigo-500/50 bg-indigo-500/20 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-indigo-500/30'
-        : 'tag-btn rounded-full border border-white/[0.1] bg-white/[0.04] px-3 py-1 text-[11px] font-semibold text-zinc-400 transition hover:bg-white/[0.08] hover:text-white';
-    });
+  const tagBar = document.getElementById('gifs-tag-filter');
+  const regionBar = document.getElementById('gifs-region-filter');
+  const equipBar = document.getElementById('gifs-equipment-filter');
+  let libraryRegions = [];
+  let activeTag = '';
+  let activeRegion = ''; // '' = All, '__none__' = Uncategorized, else region id
+  let activeEquipment = ''; // '' = All (within region), '__none__' = Uncategorized, else equipment id
+
+  function applyFilters() {
     document.querySelectorAll('#gifs-grid article[data-tags]').forEach((card) => {
-      if (!active) { card.style.display = ''; return; }
-      const tags = (card.getAttribute('data-tags') || '').split(',').map(t => t.trim()).filter(Boolean);
-      card.style.display = tags.includes(active) ? '' : 'none';
+      const tags = (card.getAttribute('data-tags') || '').split(',').map((t) => t.trim()).filter(Boolean);
+      const regionId = card.getAttribute('data-region-id') || '';
+      const equipmentId = card.getAttribute('data-equipment-id') || '';
+
+      let regionMatch = true;
+      if (activeRegion === '__none__') regionMatch = !regionId;
+      else if (activeRegion) regionMatch = regionId === activeRegion;
+
+      let equipMatch = true;
+      if (activeRegion) {
+        if (activeEquipment === '__none__') equipMatch = !equipmentId;
+        else if (activeEquipment) equipMatch = equipmentId === activeEquipment;
+      }
+
+      const tagMatch = !activeTag || tags.includes(activeTag);
+
+      card.style.display = (regionMatch && equipMatch && tagMatch) ? '' : 'none';
     });
+  }
+
+  function renderEquipmentChips() {
+    if (!equipBar) return;
+    if (!activeRegion || activeRegion === '__none__') {
+      equipBar.classList.add('hidden');
+      equipBar.classList.remove('flex');
+      equipBar.innerHTML = '';
+      return;
+    }
+    const region = libraryRegions.find((r) => r.id === activeRegion);
+    const equipment = region ? region.equipment : [];
+    equipBar.classList.remove('hidden');
+    equipBar.classList.add('flex');
+    const chip = (value, label, active) => `<button type="button" data-equipment="${value}" class="equip-btn rounded-full border px-3 py-1 text-[11px] font-semibold transition ${active ? 'border-cyan-500/50 bg-cyan-500/20 text-white hover:bg-cyan-500/30' : 'border-white/[0.1] bg-white/[0.04] text-zinc-400 hover:bg-white/[0.08] hover:text-white'}">${label}</button>`;
+    let html = chip('', 'All equipment', activeEquipment === '');
+    equipment.forEach((e) => { html += chip(e.id, e.name, activeEquipment === e.id); });
+    html += chip('__none__', 'Uncategorized', activeEquipment === '__none__');
+    equipBar.innerHTML = html;
+  }
+
+  function renderRegionChips() {
+    if (!regionBar) return;
+    const chip = (value, label, active) => `<button type="button" data-region="${value}" class="region-btn rounded-full border px-3 py-1 text-[11px] font-semibold transition ${active ? 'border-indigo-500/50 bg-indigo-500/20 text-white hover:bg-indigo-500/30' : 'border-white/[0.1] bg-white/[0.04] text-zinc-400 hover:bg-white/[0.08] hover:text-white'}">${label}</button>`;
+    let html = chip('', 'All', activeRegion === '');
+    libraryRegions.forEach((r) => { html += chip(r.id, r.name, activeRegion === r.id); });
+    html += chip('__none__', 'Uncategorized', activeRegion === '__none__');
+    regionBar.innerHTML = html;
+  }
+
+  async function loadCategoriesAndRender() {
+    libraryRegions = await window.FormLoopLibrary.fetchCategories();
+    renderRegionChips();
+    renderEquipmentChips();
+    applyFilters();
+  }
+
+  if (regionBar) {
+    regionBar.addEventListener('click', (e) => {
+      const btn = e.target.closest('.region-btn');
+      if (!btn) return;
+      activeRegion = btn.getAttribute('data-region');
+      activeEquipment = '';
+      renderRegionChips();
+      renderEquipmentChips();
+      applyFilters();
+    });
+  }
+  if (equipBar) {
+    equipBar.addEventListener('click', (e) => {
+      const btn = e.target.closest('.equip-btn');
+      if (!btn) return;
+      activeEquipment = btn.getAttribute('data-equipment');
+      renderEquipmentChips();
+      applyFilters();
+    });
+  }
+  if (tagBar) {
+    tagBar.addEventListener('click', (e) => {
+      const btn = e.target.closest('.tag-btn');
+      if (!btn) return;
+      activeTag = btn.getAttribute('data-tag');
+      tagBar.querySelectorAll('.tag-btn').forEach((b) => {
+        const isActive = b.getAttribute('data-tag') === activeTag;
+        b.className = isActive
+          ? 'tag-btn rounded-full border border-indigo-500/50 bg-indigo-500/20 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-indigo-500/30'
+          : 'tag-btn rounded-full border border-white/[0.1] bg-white/[0.04] px-3 py-1 text-[11px] font-semibold text-zinc-400 transition hover:bg-white/[0.08] hover:text-white';
+      });
+      applyFilters();
+    });
+  }
+
+  loadCategoriesAndRender();
+
+  // --- Edit-export modal ---
+  const editModal = document.getElementById('gifs-edit-modal');
+  const editTitle = document.getElementById('gifs-edit-title');
+  const editTags = document.getElementById('gifs-edit-tags');
+  const editRegion = document.getElementById('gifs-edit-region');
+  const editEquipment = document.getElementById('gifs-edit-equipment');
+  let editJobId = null;
+
+  function closeEditModal() {
+    if (editModal) editModal.classList.add('hidden');
+    editJobId = null;
+  }
+  function populateEditEquipment(regionId, selectedEquipmentId) {
+    const region = libraryRegions.find((r) => r.id === regionId);
+    window.FormLoopLibrary.populateSelect(editEquipment, region ? region.equipment : [], {
+      blankLabel: 'Equipment: Uncategorized',
+      newLabel: '+ New equipment…',
+      selectedId: selectedEquipmentId || '',
+    });
+    editEquipment.disabled = !regionId;
+  }
+
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-edit-export]');
+    if (!btn || !editModal) return;
+    editJobId = btn.getAttribute('data-edit-export');
+    editTitle.value = btn.getAttribute('data-current-title') || '';
+    editTags.value = (btn.getAttribute('data-current-tags') || '').split(',').filter(Boolean).join(', ');
+    const currentRegion = btn.getAttribute('data-current-region') || '';
+    const currentEquipment = btn.getAttribute('data-current-equipment') || '';
+    // Fetch fresh (not the possibly-not-yet-loaded outer libraryRegions) so
+    // the dropdown is never stuck showing only "Uncategorized" if this click
+    // happens before the page's initial category load finished.
+    libraryRegions = await window.FormLoopLibrary.fetchCategories();
+    window.FormLoopLibrary.populateSelect(editRegion, libraryRegions, {
+      blankLabel: 'Region: Uncategorized',
+      newLabel: '+ New region…',
+      selectedId: currentRegion,
+    });
+    populateEditEquipment(currentRegion, currentEquipment);
+    editModal.classList.remove('hidden');
+  });
+
+  if (editRegion) {
+    editRegion.addEventListener('change', async () => {
+      if (editRegion.value === '__new__') {
+        const name = (prompt('New region name:') || '').trim();
+        if (!name) { editRegion.value = ''; populateEditEquipment('', ''); return; }
+        try {
+          const region = await window.FormLoopLibrary.createRegion(name);
+          libraryRegions = await window.FormLoopLibrary.fetchCategories(true);
+          window.FormLoopLibrary.populateSelect(editRegion, libraryRegions, { blankLabel: 'Region: Uncategorized', newLabel: '+ New region…', selectedId: region.id });
+          populateEditEquipment(region.id, '');
+          renderRegionChips();
+        } catch (err) {
+          alert(err.message || 'Failed to create region');
+          editRegion.value = '';
+          populateEditEquipment('', '');
+        }
+        return;
+      }
+      populateEditEquipment(editRegion.value, '');
+    });
+  }
+  if (editEquipment) {
+    editEquipment.addEventListener('change', async () => {
+      if (editEquipment.value === '__new__') {
+        const regionId = editRegion.value;
+        const name = (prompt('New equipment name:') || '').trim();
+        if (!name) { editEquipment.value = ''; return; }
+        try {
+          const equip = await window.FormLoopLibrary.createEquipment(regionId, name);
+          libraryRegions = await window.FormLoopLibrary.fetchCategories(true);
+          populateEditEquipment(regionId, equip.id);
+        } catch (err) {
+          alert(err.message || 'Failed to create equipment');
+          editEquipment.value = '';
+        }
+      }
+    });
+  }
+  document.getElementById('gifs-edit-close')?.addEventListener('click', closeEditModal);
+  document.getElementById('gifs-edit-cancel')?.addEventListener('click', closeEditModal);
+  document.getElementById('gifs-edit-save')?.addEventListener('click', async () => {
+    if (!editJobId) return;
+    const saveBtn = document.getElementById('gifs-edit-save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    try {
+      const tags = editTags.value.split(',').map((t) => t.trim()).filter(Boolean);
+      await window.FormLoopLibrary.editExport(editJobId, {
+        title: editTitle.value.trim() || null,
+        tags,
+        region_id: editRegion.value && editRegion.value !== '__new__' ? editRegion.value : null,
+        equipment_id: editEquipment.value && editEquipment.value !== '__new__' ? editEquipment.value : null,
+      });
+      window.location.reload();
+    } catch (err) {
+      alert(err.message || 'Failed to save changes');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    }
+  });
+
+  // --- Manage-categories modal ---
+  const manageModal = document.getElementById('gifs-manage-modal');
+  const manageList = document.getElementById('gifs-manage-regions-list');
+
+  function renderManageModal() {
+    if (!manageList) return;
+    manageList.innerHTML = libraryRegions.map((region, ri) => {
+      const equipRows = region.equipment.map((eq, ei) => `
+        <div class="flex items-center gap-1.5 pl-4">
+          <span class="flex-1 text-xs text-zinc-300 truncate">${eq.name}</span>
+          <button type="button" data-equip-up="${eq.id}" data-region="${region.id}" ${ei === 0 ? 'disabled' : ''} class="text-zinc-500 hover:text-white disabled:opacity-20 text-xs px-1">&uarr;</button>
+          <button type="button" data-equip-down="${eq.id}" data-region="${region.id}" ${ei === region.equipment.length - 1 ? 'disabled' : ''} class="text-zinc-500 hover:text-white disabled:opacity-20 text-xs px-1">&darr;</button>
+          <button type="button" data-equip-rename="${eq.id}" data-region="${region.id}" class="text-zinc-500 hover:text-white text-xs px-1">Rename</button>
+          <button type="button" data-equip-delete="${eq.id}" data-region="${region.id}" class="text-rose-400/80 hover:text-rose-300 text-xs px-1">Delete</button>
+        </div>`).join('');
+      return `
+        <div class="rounded-lg border border-white/[0.08] bg-white/[0.02] p-2.5">
+          <div class="flex items-center gap-1.5">
+            <span class="flex-1 text-sm font-semibold text-white truncate">${region.name}</span>
+            <button type="button" data-region-up="${region.id}" ${ri === 0 ? 'disabled' : ''} class="text-zinc-500 hover:text-white disabled:opacity-20 text-xs px-1">&uarr;</button>
+            <button type="button" data-region-down="${region.id}" ${ri === libraryRegions.length - 1 ? 'disabled' : ''} class="text-zinc-500 hover:text-white disabled:opacity-20 text-xs px-1">&darr;</button>
+            <button type="button" data-region-rename="${region.id}" class="text-zinc-500 hover:text-white text-xs px-1">Rename</button>
+            <button type="button" data-region-delete="${region.id}" class="text-rose-400/80 hover:text-rose-300 text-xs px-1">Delete</button>
+          </div>
+          <div class="mt-1.5 grid gap-1">${equipRows}</div>
+          <button type="button" data-equip-add="${region.id}" class="mt-1.5 ml-4 text-[11px] font-semibold text-indigo-400 hover:text-indigo-300">+ Add equipment</button>
+        </div>`;
+    }).join('') || '<p class="text-xs text-zinc-500">No regions yet.</p>';
+  }
+
+  async function refreshManage() {
+    libraryRegions = await window.FormLoopLibrary.fetchCategories(true);
+    renderManageModal();
+    renderRegionChips();
+    renderEquipmentChips();
+    applyFilters();
+  }
+
+  document.getElementById('gifs-manage-categories-btn')?.addEventListener('click', async () => {
+    if (!manageModal) return;
+    libraryRegions = await window.FormLoopLibrary.fetchCategories();
+    renderManageModal();
+    manageModal.classList.remove('hidden');
+  });
+  document.getElementById('gifs-manage-close')?.addEventListener('click', () => manageModal.classList.add('hidden'));
+  document.getElementById('gifs-manage-add-region')?.addEventListener('click', async () => {
+    const name = (prompt('New region name:') || '').trim();
+    if (!name) return;
+    try {
+      await window.FormLoopLibrary.createRegion(name);
+      await refreshManage();
+    } catch (err) {
+      alert(err.message || 'Failed to create region');
+    }
+  });
+
+  manageList?.addEventListener('click', async (e) => {
+    const t = e.target;
+    try {
+      if (t.matches('[data-region-rename]')) {
+        const id = t.getAttribute('data-region-rename');
+        const region = libraryRegions.find((r) => r.id === id);
+        const name = (prompt('Rename region:', region ? region.name : '') || '').trim();
+        if (!name) return;
+        await window.FormLoopLibrary.renameRegion(id, name);
+        await refreshManage();
+      } else if (t.matches('[data-region-delete]')) {
+        const id = t.getAttribute('data-region-delete');
+        const region = libraryRegions.find((r) => r.id === id);
+        if (!confirm(`Delete "${region ? region.name : 'this region'}"? Any GIFs in it will move to Uncategorized. This cannot be undone.`)) return;
+        await window.FormLoopLibrary.deleteRegion(id);
+        await refreshManage();
+      } else if (t.matches('[data-region-up]') || t.matches('[data-region-down]')) {
+        const id = t.getAttribute('data-region-up') || t.getAttribute('data-region-down');
+        const dir = t.hasAttribute('data-region-up') ? -1 : 1;
+        const ids = libraryRegions.map((r) => r.id);
+        const idx = ids.indexOf(id);
+        const swapWith = idx + dir;
+        if (swapWith < 0 || swapWith >= ids.length) return;
+        [ids[idx], ids[swapWith]] = [ids[swapWith], ids[idx]];
+        await window.FormLoopLibrary.reorderRegions(ids); // full ordered list, always
+        await refreshManage();
+      } else if (t.matches('[data-equip-add]')) {
+        const regionId = t.getAttribute('data-equip-add');
+        const name = (prompt('New equipment name:') || '').trim();
+        if (!name) return;
+        await window.FormLoopLibrary.createEquipment(regionId, name);
+        await refreshManage();
+      } else if (t.matches('[data-equip-rename]')) {
+        const id = t.getAttribute('data-equip-rename');
+        const regionId = t.getAttribute('data-region');
+        const region = libraryRegions.find((r) => r.id === regionId);
+        const eq = region ? region.equipment.find((e) => e.id === id) : null;
+        const name = (prompt('Rename equipment:', eq ? eq.name : '') || '').trim();
+        if (!name) return;
+        await window.FormLoopLibrary.renameEquipment(regionId, id, name);
+        await refreshManage();
+      } else if (t.matches('[data-equip-delete]')) {
+        const id = t.getAttribute('data-equip-delete');
+        const regionId = t.getAttribute('data-region');
+        const region = libraryRegions.find((r) => r.id === regionId);
+        const eq = region ? region.equipment.find((e) => e.id === id) : null;
+        if (!confirm(`Delete "${eq ? eq.name : 'this equipment'}"? Any GIFs using it will move to Uncategorized (within its region). This cannot be undone.`)) return;
+        await window.FormLoopLibrary.deleteEquipment(regionId, id);
+        await refreshManage();
+      } else if (t.matches('[data-equip-up]') || t.matches('[data-equip-down]')) {
+        const regionId = t.getAttribute('data-region');
+        const id = t.getAttribute('data-equip-up') || t.getAttribute('data-equip-down');
+        const dir = t.hasAttribute('data-equip-up') ? -1 : 1;
+        const region = libraryRegions.find((r) => r.id === regionId);
+        if (!region) return;
+        const ids = region.equipment.map((e) => e.id);
+        const idx = ids.indexOf(id);
+        const swapWith = idx + dir;
+        if (swapWith < 0 || swapWith >= ids.length) return;
+        [ids[idx], ids[swapWith]] = [ids[swapWith], ids[idx]];
+        await window.FormLoopLibrary.reorderEquipment(regionId, ids); // full ordered list, always
+        await refreshManage();
+      }
+    } catch (err) {
+      alert(err.message || 'Action failed');
+    }
   });
 })();
 </script>
@@ -237,6 +606,15 @@
         if (smartCopyLabel) smartCopyLabel.textContent = 'Copy GIF URL';
       }
     });
+  });
+
+  // Apply each card's saved format preference (from the two-option GIF/WebM
+  // picker at save time) as its initial preview -- reuses the exact same
+  // switch-preview button/click logic above rather than duplicating it.
+  document.querySelectorAll('article[data-default-format="webm"]').forEach((card) => {
+    const id = card.getAttribute('data-job-id');
+    const webmBtn = id ? document.querySelector(`[data-switch-preview="${id}"][data-target="webm"]`) : null;
+    if (webmBtn) webmBtn.click();
   });
 
   // Downloads route through the api_server proxy (/api/v1/matte/download) so the
