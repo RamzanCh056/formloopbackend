@@ -29,9 +29,39 @@
       </div>
       <p class="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400/90">Active plan</p>
       <p class="mt-2 text-xl font-bold text-white">You’re on <span class="bg-gradient-to-r from-emerald-200 to-cyan-200 bg-clip-text text-transparent">{{ user.plan_label }}</span></p>
-      <a href="/dashboard" class="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-2.5 text-xs font-bold text-void shadow-lg transition hover:bg-zinc-100">Back to dashboard</a>
+      <div class="mt-6 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+        <form method="post" action="/subscription/portal">
+          <button type="submit" class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.06] px-5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-white/[0.1]">Manage subscription</button>
+        </form>
+        <a href="/dashboard" class="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-2.5 text-xs font-bold text-void shadow-lg transition hover:bg-zinc-100">Back to dashboard</a>
+      </div>
+      <p class="mt-3 text-[11px] text-zinc-500">Upgrade, downgrade, update payment, or cancel — all handled securely by Stripe.</p>
     </div>
   </div>
+
+  {% if upgrade_plans %}
+  <div class="relative z-10 mx-auto mt-12 max-w-4xl">
+    <h2 class="text-center text-lg font-bold text-white">Upgrade your plan</h2>
+    <p class="mx-auto mt-1.5 max-w-md text-center text-xs leading-relaxed text-zinc-500">Moves your existing subscription to the new plan with prorated billing — never a second charge.</p>
+    <div class="mt-6 grid gap-5 sm:grid-cols-2 {% if upgrade_plans|length >= 3 %}lg:grid-cols-3{% endif %}">
+      {% for p in upgrade_plans %}
+      <div class="flex flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-gradient-to-b from-[#12121a] to-[#0a0a0e] p-5">
+        <h3 class="text-base font-bold text-white">{{ p.name }}</h3>
+        <p class="mt-1 text-xs leading-relaxed text-zinc-500">{{ p.tagline }}</p>
+        <p class="mt-3 flex items-baseline gap-1">
+          <span class="text-2xl font-bold tabular-nums tracking-tight text-white">${{ p.monthly_usd | price_fmt }}</span>
+          <span class="text-xs font-medium text-zinc-500">/mo</span>
+        </p>
+        <form method="post" action="/subscription/upgrade" class="mt-4">
+          <input type="hidden" name="plan" value="{{ p.key }}" />
+          <button type="submit" class="flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 ring-1 ring-white/10 transition hover:brightness-110">Upgrade to {{ p.name }}</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   {% else %}
 
   <header class="relative z-10 mx-auto mb-12 max-w-2xl text-center">

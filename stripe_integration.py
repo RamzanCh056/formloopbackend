@@ -290,6 +290,84 @@ def create_subscription_checkout_session(
     return stripe.checkout.Session.create(**params)
 
 
+def create_billing_portal_session(
+    *,
+    customer_id: str,
+    return_url: str,
+) -> stripe.billing_portal.Session:
+    """Hosted Stripe page for upgrade/downgrade/cancel/payment-method updates —
+    the safe alternative to hand-rolling those flows. Cancellations made here
+    fire the same customer.subscription.updated/.deleted webhooks already
+    handled in handle_webhook_event, so no separate cancel code is needed."""
+    configure_stripe()
+    return stripe.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=return_url,
+    )
+
+
+def create_billing_portal_upgrade_session(
+    *,
+    customer_id: str,
+    subscription_id: str,
+    plan_key: str,
+    return_url: str,
+) -> stripe.billing_portal.Session:
+    """Deep-links straight to the portal's plan-switch confirmation screen for
+    a specific target plan, pre-filled -- NOT a fresh Checkout Session. This
+    is the only safe way to move an existing subscriber to a higher tier:
+    Stripe modifies the existing subscription in place (with proration), so
+    there is no risk of the double-subscription/double-charge that reusing
+    create_subscription_checkout_session for an existing customer would cause.
+
+    Requires the account's Billing Portal configuration to have
+    features.subscription_update enabled with this plan's Products allowed
+    (Settings -> Billing -> Customer portal in the Stripe Dashboard) --
+    Stripe raises an InvalidRequestError otherwise, which the caller should
+    catch and surface as a graceful "not available yet" message rather than
+    a crash.
+    """
+    configure_stripe()
+    sub = stripe.Subscription.retrieve(subscription_id)
+    items = getattr(sub, "items", None)
+    item_data = getattr(items, "data", None) if items else None
+    if not item_data:
+        raise ValueError("Subscription has no line items to update")
+    item = item_data[0]
+    item_id = getattr(item, "id", None)
+    if not item_id:
+        raise ValueError("Subscription item is missing an id")
+
+    # Keep the same billing interval (monthly stays monthly, yearly stays
+    # yearly) rather than silently switching it as a side effect of an
+    # upgrade -- the customer only asked to change tier, not cadence.
+    current_price = getattr(item, "price", None)
+    interval = getattr(getattr(current_price, "recurring", None), "interval", None)
+    yearly = interval == "year"
+
+    price_id = resolve_checkout_price_id(plan_key, yearly=yearly)
+    if not price_id:
+        raise ValueError(
+            f"No Stripe price for plan={plan_key} yearly={yearly} — add recurring Prices or set STRIPE_PRICE_* env vars."
+        )
+
+    return stripe.billing_portal.Session.create(
+        customer=customer_id,
+        return_url=return_url,
+        flow_data={
+            "type": "subscription_update_confirm",
+            "subscription_update_confirm": {
+                "subscription": subscription_id,
+                "items": [{"id": item_id, "price": price_id}],
+            },
+            "after_completion": {
+                "type": "redirect",
+                "redirect": {"return_url": return_url},
+            },
+        },
+    )
+
+
 def _meta_dict(meta: Any) -> dict[str, Any]:
     if meta is None:
         return {}
@@ -345,7 +423,14 @@ def _apply_subscription_object(sub: Any) -> None:
 
     status = str(getattr(sub, "status", "") or "")
     price_id = _first_price_id(sub)
-    tier = (meta.get("plan_key") or _subscription_tier_from_price(price_id) or "free").strip().lower()
+    # Price-based lookup (the plan Stripe is actually billing) wins over
+    # metadata.plan_key. metadata is set once at initial checkout and never
+    # updated by a portal-initiated plan switch, so after an upgrade/
+    # downgrade it would silently keep reporting the OLD tier -- wrong GIF
+    # cap even though the customer is correctly billed on the new plan.
+    # metadata is now only the fallback for the (normal) case where the
+    # price can't be resolved back to a plan for some reason.
+    tier = (_subscription_tier_from_price(price_id) or meta.get("plan_key") or "free").strip().lower()
     cps = getattr(sub, "current_period_start", None)
     cus = getattr(sub, "customer", None)
     cus_id = cus if isinstance(cus, str) else getattr(cus, "id", None)

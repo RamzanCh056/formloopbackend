@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
+import stripe
 from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, Form, HTTPException, Request
@@ -648,6 +649,19 @@ async def subscription_page(request: Request):
         if paid_plans
         else int(YEARLY_DISCOUNT * 100)
     )
+    # PLANS_ORDERED is already ascending by tier/price (starter < pro <
+    # unlimited), so everything after the user's current tier is a valid
+    # upgrade target. Free users never see this (is_premium gates the whole
+    # section in the template) and Unlimited has nothing above it, so
+    # upgrade_plans naturally comes out empty in both cases.
+    upgrade_plans: list[dict[str, Any]] = []
+    if not guest_mode and getattr(user, "is_premium", False):
+        tier_keys = [p.key for p in PLANS_ORDERED]
+        try:
+            current_idx = tier_keys.index(getattr(user, "plan_tier", ""))
+            upgrade_plans = [pl for pl in paid_plans if pl["key"] in tier_keys[current_idx + 1 :]]
+        except ValueError:
+            pass
     notice = None
     if e == "no_stripe":
         notice = (
@@ -670,6 +684,12 @@ async def subscription_page(request: Request):
         notice = "That checkout session does not match your signed-in account."
     elif e == "checkout_error":
         notice = "Checkout could not be started. Check Stripe keys and that each Product has monthly/yearly Prices."
+    elif e == "no_customer":
+        notice = "We couldn't find a Stripe customer on your account yet. Contact support if this persists."
+    elif e == "portal_error":
+        notice = "Couldn't open the billing portal right now. Please try again shortly."
+    elif e == "already_on_plan":
+        notice = "You're already on this plan."
     elif e == "success":
         notice = "Welcome to your paid plan — your higher GIF quota and watermark-free exports are active."
     return templates.TemplateResponse(
@@ -679,6 +699,7 @@ async def subscription_page(request: Request):
             "user": user,
             "guest_mode": guest_mode,
             "paid_plans": paid_plans,
+            "upgrade_plans": upgrade_plans,
             "free_tier_bullets": free_tier_bullets(),
             "header_discount_pct": header_discount_pct,
             "upgrade_notice": notice,
@@ -728,6 +749,113 @@ async def subscription_checkout(
     url = getattr(sess, "url", None) or (sess.get("url") if isinstance(sess, dict) else None)
     if not url:
         return RedirectResponse(f"{base}/subscription?e=checkout_error", status_code=302)
+    return RedirectResponse(str(url), status_code=303)
+
+
+@router.post("/subscription/portal")
+async def subscription_portal(request: Request):
+    """Redirect a signed-in Pro/paid user to the hosted Stripe Billing Portal
+    for upgrade/downgrade/cancel/payment-method updates. Free-user checkout
+    (/subscription/checkout above) is untouched by this route."""
+    user = _session_user(request)
+    if not user:
+        return RedirectResponse("/auth/login?next=/subscription", status_code=302)
+    base = str(request.base_url).rstrip("/")
+    from stripe_integration import ensure_stripe_env
+
+    ensure_stripe_env()
+    if not os.environ.get("STRIPE_SECRET_KEY", "").strip():
+        return RedirectResponse(f"{base}/subscription?e=no_stripe", status_code=302)
+    bill = read_billing(str(user.id))
+    customer_id = bill.stripe_customer_id if bill else None
+    if not customer_id:
+        # Shouldn't happen for a genuinely premium account (checkout always
+        # attaches a Stripe customer), but fail gracefully rather than 500 --
+        # e.g. billing state was hand-edited or the webhook hasn't landed yet.
+        _log.warning("Subscription portal: premium user %s has no stripe_customer_id", user.id)
+        return RedirectResponse(f"{base}/subscription?e=no_customer", status_code=302)
+    try:
+        from stripe_integration import create_billing_portal_session
+
+        sess = await asyncio.to_thread(
+            create_billing_portal_session,
+            customer_id=str(customer_id),
+            return_url=f"{base}/subscription",
+        )
+    except Exception:
+        _log.exception("Stripe billing portal session failed (see server log)")
+        return RedirectResponse(f"{base}/subscription?e=portal_error", status_code=302)
+    url = getattr(sess, "url", None) or (sess.get("url") if isinstance(sess, dict) else None)
+    if not url:
+        return RedirectResponse(f"{base}/subscription?e=portal_error", status_code=302)
+    return RedirectResponse(str(url), status_code=303)
+
+
+@router.post("/subscription/upgrade")
+async def subscription_upgrade(request: Request, plan: str = Form(...)):
+    """Move an existing paid subscriber to a HIGHER tier via a Billing Portal
+    deep link that modifies their existing subscription in place (proration,
+    no duplicate). Deliberately does NOT touch /subscription/checkout, which
+    always creates a brand-new subscription and would double-charge an
+    existing subscriber if reused here."""
+    user = _session_user(request)
+    if not user:
+        return RedirectResponse("/auth/login?next=/subscription", status_code=302)
+    if not getattr(user, "is_premium", False):
+        # Free users upgrade via /subscription/checkout, not this route.
+        return RedirectResponse("/subscription?e=bad_plan", status_code=302)
+    base = str(request.base_url).rstrip("/")
+    from stripe_integration import ensure_stripe_env
+
+    ensure_stripe_env()
+    if not os.environ.get("STRIPE_SECRET_KEY", "").strip():
+        return RedirectResponse(f"{base}/subscription?e=no_stripe", status_code=302)
+    spec = plan_spec_by_key(plan)
+    if not spec:
+        return RedirectResponse(f"{base}/subscription?e=bad_plan", status_code=302)
+    bill = read_billing(str(user.id))
+    customer_id = bill.stripe_customer_id if bill else None
+    subscription_id = bill.stripe_subscription_id if bill else None
+    if not customer_id or not subscription_id:
+        _log.warning(
+            "Subscription upgrade: premium user %s missing customer/subscription id (customer=%s sub=%s)",
+            user.id, customer_id, subscription_id,
+        )
+        return RedirectResponse(f"{base}/subscription?e=no_customer", status_code=302)
+    try:
+        from stripe_integration import create_billing_portal_upgrade_session
+
+        sess = await asyncio.to_thread(
+            create_billing_portal_upgrade_session,
+            customer_id=str(customer_id),
+            subscription_id=str(subscription_id),
+            plan_key=str(spec.key),
+            return_url=f"{base}/subscription",
+        )
+    except ValueError as exc:
+        _log.warning("Stripe upgrade portal session: %s", exc)
+        return RedirectResponse(f"{base}/subscription?e=no_price", status_code=302)
+    except stripe.InvalidRequestError as exc:
+        # Stripe raises this specific message when the subscription is
+        # already on the requested price -- e.g. local BillingState is
+        # stale (webhook hasn't landed yet) but the account is genuinely
+        # already on the target plan. A friendlier notice than the generic
+        # portal_error, since nothing actually went wrong.
+        if "no changes to confirm" in str(exc).lower():
+            _log.info("Stripe upgrade portal session: already on target plan (%s)", exc)
+            return RedirectResponse(f"{base}/subscription?e=already_on_plan", status_code=302)
+        _log.exception("Stripe upgrade portal session failed (see server log)")
+        return RedirectResponse(f"{base}/subscription?e=portal_error", status_code=302)
+    except Exception:
+        # Most likely cause today: the account's Billing Portal configuration
+        # has features.subscription_update disabled (Settings -> Billing ->
+        # Customer portal in the Stripe Dashboard) -- Stripe rejects the
+        # subscription_update_confirm flow_data until that's turned on.
+        _log.exception("Stripe upgrade portal session failed (see server log)")
+        return RedirectResponse(f"{base}/subscription?e=portal_error", status_code=302)
+    url = getattr(sess, "url", None) or (sess.get("url") if isinstance(sess, dict) else None)
+    if not url:
+        return RedirectResponse(f"{base}/subscription?e=portal_error", status_code=302)
     return RedirectResponse(str(url), status_code=303)
 
 
