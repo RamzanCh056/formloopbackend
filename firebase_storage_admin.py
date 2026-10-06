@@ -374,10 +374,117 @@ def delete_user_export_from_firestore(uid: str, job_id: str) -> bool:
         for snap in hits:
             snap.reference.delete()
             deleted = True
+        if deleted:
+            # Deleting from the library also kills its public /g/{job_id} link.
+            delete_public_link(uid, job_id)
         return deleted
     except Exception as exc:
         _log.warning("Firestore delete_user_export uid=%s job_id=%s: %s", uid, job_id, exc)
         return False
+
+
+# ---------------------------------------------------------------------------
+# Public share links: /g/{job_id}.gif streams users/{uid}/exports/{exportId}/.
+# Top-level publicLinks/{job_id} -> {uid, exportId} lets the unauthenticated
+# route resolve a job_id (uuid4 hex, unguessable) to its storage path without
+# a collection-group query. exportId itself is exp_<ms timestamp> (guessable),
+# so it is never used as the public key.
+# ---------------------------------------------------------------------------
+_PUBLIC_LINKS = "publicLinks"
+_EXPORT_OBJECT_NAMES = {"gif": "matte.gif", "webm": "matte_transparent.webm"}
+
+
+def find_export_id_for_job(uid: str, job_id: str) -> str | None:
+    if not firebase_storage_ready():
+        return None
+    try:
+        from firebase_admin import firestore as _fs
+        col = _fs.client().collection("users").document(uid).collection("exports")
+        for snap in col.where("jobId", "==", job_id).limit(1).stream():
+            return snap.id
+    except Exception as exc:
+        _log.warning("find_export_id_for_job uid=%s job_id=%s: %s", uid, job_id, exc)
+    return None
+
+
+def write_public_link(uid: str, job_id: str, export_id: str) -> bool:
+    if not firebase_storage_ready():
+        return False
+    try:
+        from firebase_admin import firestore as _fs
+        _fs.client().collection(_PUBLIC_LINKS).document(job_id).set(
+            {"uid": uid, "exportId": export_id}
+        )
+        return True
+    except Exception as exc:
+        _log.warning("write_public_link job_id=%s: %s", job_id, exc)
+        return False
+
+
+def delete_public_link(uid: str, job_id: str) -> None:
+    try:
+        from firebase_admin import firestore as _fs
+        ref = _fs.client().collection(_PUBLIC_LINKS).document(job_id)
+        snap = ref.get()
+        if snap.exists and (snap.to_dict() or {}).get("uid") == uid:
+            ref.delete()
+    except Exception as exc:
+        _log.warning("delete_public_link job_id=%s: %s", job_id, exc)
+
+
+def get_public_link(job_id: str) -> tuple[str, str] | None:
+    """Return (uid, exportId) for a registered public link, or None."""
+    if not firebase_storage_ready():
+        return None
+    try:
+        from firebase_admin import firestore as _fs
+        snap = _fs.client().collection(_PUBLIC_LINKS).document(job_id).get()
+        data = (snap.to_dict() or {}) if snap.exists else {}
+        uid, export_id = data.get("uid"), data.get("exportId")
+        return (uid, export_id) if uid and export_id else None
+    except Exception as exc:
+        _log.warning("get_public_link job_id=%s: %s", job_id, exc)
+        return None
+
+
+# Frame-trimmed copies (see gif_trim.TRIM_OUTPUT_NAMES), uploaded next to the
+# original. The public GIF link serves the newest one; matte.gif stays the
+# untouched full-quality original.
+TRIMMED_GIF_NAMES = ("matte_fit.gif", "matte_trim.gif")
+
+
+def upload_trimmed_gifs(uid: str, export_id: str, paths: list[Path]) -> None:
+    """Upload trimmed GIFs in the given order (oldest first, so 'updated' order matches)."""
+    if not firebase_storage_ready():
+        return
+    base = f"users/{uid}/exports/{export_id}"
+    for p in paths:
+        if p.name in TRIMMED_GIF_NAMES and p.is_file():
+            _upload_file(p, f"{base}/{p.name}", "image/gif")
+
+
+def get_public_export_blob(job_id: str, kind: str):
+    """Return the storage Blob (with metadata loaded) for a public link, or None.
+
+    For GIFs, the most recently uploaded trimmed copy wins over the original.
+    """
+    name = _EXPORT_OBJECT_NAMES.get(kind)
+    link = get_public_link(job_id) if name else None
+    if not link:
+        return None
+    uid, export_id = link
+    try:
+        from firebase_admin import storage
+        bucket = storage.bucket()
+        base = f"users/{uid}/exports/{export_id}"
+        if kind == "gif":
+            trimmed = [b for b in (bucket.get_blob(f"{base}/{n}") for n in TRIMMED_GIF_NAMES) if b is not None]
+            if trimmed:
+                return max(trimmed, key=lambda b: b.updated)
+        return bucket.get_blob(f"{base}/{name}")
+    except Exception as exc:
+        _log.warning("get_public_export_blob job_id=%s kind=%s: %s", job_id, kind, exc)
+        return None
 
 
 _UNSET = object()  # sentinel: "field not provided" vs "explicitly set to null"

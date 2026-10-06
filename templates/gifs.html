@@ -541,15 +541,44 @@
 })();
 </script>
 <script>
+  // Copy a first-party public link (/g/{job_id}.gif|.webm) instead of the raw
+  // Firebase token URL. The server registers the link on first copy; if that
+  // fails (e.g. a local-only export not in Firestore) we fall back to the raw URL.
+  const shareLinks = {};
+  const resolveShareUrl = async (jobId, type, rawUrl) => {
+    try {
+      if (!shareLinks[jobId]) {
+        const r = await fetch(`/api/v1/library/share/${jobId}`, { method: 'POST', credentials: 'same-origin' });
+        if (!r.ok) throw new Error(`share ${r.status}`);
+        shareLinks[jobId] = await r.json();
+      }
+      return (type === 'webm' ? shareLinks[jobId].webm_url : shareLinks[jobId].gif_url) || rawUrl;
+    } catch (e) {
+      console.warn('Public link unavailable, copying storage URL instead:', e);
+      return rawUrl;
+    }
+  };
   document.querySelectorAll('[data-smart-copy]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      const jobId = btn.getAttribute('data-smart-copy');
       const type = btn.getAttribute('data-current-type') || 'gif';
-      const u = type === 'webm'
+      const raw = type === 'webm'
         ? (btn.getAttribute('data-webm-url') || '')
         : (btn.getAttribute('data-gif-url') || '');
-      if (!u) return;
+      if (!raw) return;
+      const pending = resolveShareUrl(jobId, type, raw);
+      let u = raw;
       try {
-        await navigator.clipboard.writeText(u);
+        if (window.ClipboardItem && navigator.clipboard.write) {
+          // Passing the promise keeps Safari's user-gesture requirement satisfied.
+          await navigator.clipboard.write([new ClipboardItem({
+            'text/plain': pending.then((x) => new Blob([x], { type: 'text/plain' })),
+          })]);
+          u = await pending;
+        } else {
+          u = await pending;
+          await navigator.clipboard.writeText(u);
+        }
         const label = btn.querySelector('.copy-btn-label');
         if (label) {
           const t = label.textContent;
@@ -557,7 +586,7 @@
           setTimeout(() => { label.textContent = t; }, 1400);
         }
       } catch (e) {
-        prompt('Copy this URL:', u);
+        prompt('Copy this URL:', await pending);
       }
     });
   });

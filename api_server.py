@@ -252,7 +252,7 @@ except ImportError:
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -339,6 +339,9 @@ ALLOWED_RESULT_FILES = frozenset(
         "matte.apng",
         "matte_transparent.webm",
         "preview_white_backdrop.mp4",
+        # Frame-trimmed copies from the over-50MB dialog (original matte.gif untouched).
+        "matte_fit.gif",
+        "matte_trim.gif",
     }
 )
 ALLOWED_REMOTE_DOWNLOAD_HOSTS = frozenset(
@@ -939,6 +942,38 @@ def _ensure_webm_for_job(job_dir: Path) -> bool:
     return webm.is_file() and webm.stat().st_size > 0
 
 
+def _remote_content_length(url: str) -> int | None:
+    try:
+        r = requests.head(url, timeout=15, allow_redirects=True)
+        if r.status_code < 400:
+            n = int(r.headers.get("content-length") or 0)
+            return n or None
+    except Exception:
+        pass
+    return None
+
+
+def _annotate_gif_size(job_id: str, body: dict) -> dict:
+    """Add ``gif_size_bytes`` + ``oversize_for_slides`` to a result body (read-only; never touches the GIF)."""
+    from gif_trim import SLIDES_SIZE_LIMIT_BYTES, oversize_for_slides
+
+    body = dict(body)
+    ga = dict(body.get("gif_and_animation") or {})
+    size: int | None = None
+    local = OUTPUTS_DIR / job_id / "matte.gif"
+    if local.is_file():
+        size = local.stat().st_size
+    else:
+        gu = ga.get("transparent_gif")
+        if isinstance(gu, str) and gu.startswith(("http://", "https://")):
+            size = _remote_content_length(gu)
+    ga["gif_size_bytes"] = size
+    ga["oversize_for_slides"] = oversize_for_slides(size)
+    ga["slides_limit_bytes"] = SLIDES_SIZE_LIMIT_BYTES
+    body["gif_and_animation"] = ga
+    return body
+
+
 def _gif_frame_count(path: Path) -> int:
     if not path.is_file():
         return 0
@@ -1516,6 +1551,7 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
                     try:
                         if gif_path.is_file():
                             await asyncio.to_thread(_rotate_export_file, gif_path, output_rotation)
+                            await asyncio.to_thread(_recut_trimmed_after_rotation, job_dir)
                         if webm_path.is_file():
                             await asyncio.to_thread(_rotate_export_file, webm_path, output_rotation)
                         print(f"[Rotation] Applied {output_rotation}° to export job_id={job_id}", flush=True)
@@ -1589,6 +1625,11 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
                             region_id=region_id,
                             equipment_id=equipment_id,
                         )
+                        from firebase_storage_admin import upload_trimmed_gifs, write_public_link
+                        from gif_trim import trimmed_outputs
+                        write_public_link(uid, job_id, export_id)
+                        # Under-50MB trimmed copies made before saving: the public link serves the newest.
+                        await asyncio.to_thread(upload_trimmed_gifs, uid, export_id, trimmed_outputs(job_dir))
                     except Exception:
                         _log.debug(
                             "Firestore export write skipped job_id=%s export_id=%s",
@@ -1598,6 +1639,184 @@ async def save_export_to_library(job_id: str, request: Request) -> JSONResponse:
             _log.exception("Firebase Storage upload failed job_id=%s export_id=%s", job_id, export_id)
             out["storageError"] = str(exc)
     return JSONResponse(out, headers={"X-FormLoop-Save-Flow": SAVE_FLOW_VERSION})
+
+
+# ---------------------------------------------------------------------------
+# Over-50MB trim (Google Slides / Docs limit). Lossless: gifsicle frame
+# selection only drops whole frames; matte.gif itself is never modified and the
+# trimmed copy is written alongside it as matte_fit.gif / matte_trim.gif.
+# ---------------------------------------------------------------------------
+
+
+def _recut_trimmed_after_rotation(job_dir: Path) -> None:
+    """matte.gif was just re-rendered rotated; re-cut trimmed copies from it so they match."""
+    from gif_trim import recut_trimmed_outputs, trimmed_outputs
+
+    if not trimmed_outputs(job_dir):
+        return
+    try:
+        recut_trimmed_outputs(job_dir)
+    except Exception:
+        # Never serve a stale (unrotated) trim; the public link falls back to matte.gif.
+        _log.warning("Re-cutting trimmed GIFs after rotation failed in %s", job_dir, exc_info=True)
+        for p in trimmed_outputs(job_dir):
+            p.unlink(missing_ok=True)
+
+
+def _sync_trimmed_to_library(job_id: str, owner: str | None) -> None:
+    """If this job is already in the owner's library, upload its trimmed GIFs so /g/ serves them."""
+    from firebase_storage_admin import get_public_link, upload_trimmed_gifs
+    from gif_trim import trimmed_outputs
+
+    link = get_public_link(job_id)
+    if not link or (owner and link[0] != owner):
+        return
+    upload_trimmed_gifs(link[0], link[1], trimmed_outputs(OUTPUTS_DIR / job_id))
+
+
+def _request_uid(request: Request) -> str:
+    uid = (request.session.get("user_id") or "").strip()
+    if not uid:
+        uid = _uid_from_bearer(request) or ""
+        if uid:
+            request.session["user_id"] = uid
+    return uid
+
+
+def _local_gif_for_trim(job_id: str, request: Request, client_gif_url: str | None) -> Path:
+    job_dir = OUTPUTS_DIR / job_id
+    state = _get_job_state(job_id) or {}
+    if not job_dir.is_dir() and not state:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    owner = read_job_owner(job_dir) if job_dir.is_dir() else None
+    if owner and owner != _request_uid(request):
+        raise HTTPException(status_code=403, detail="not your export")
+    gif = job_dir / "matte.gif"
+    if gif.is_file():
+        return gif
+    # Remote-only result (RunPod/Modal): cache the exact bytes locally first.
+    url = ((state.get("result") or {}).get("gif_and_animation") or {}).get("transparent_gif")
+    if not url and client_gif_url:
+        parsed = urlparse(client_gif_url)
+        if parsed.scheme == "https" and (parsed.hostname or "").lower() in ALLOWED_REMOTE_DOWNLOAD_HOSTS:
+            url = client_gif_url
+    if not url or not _fetch_remote_asset_if_missing(url, gif, min_size=64, timeout=180):
+        raise HTTPException(status_code=404, detail="GIF not found for this job")
+    return gif
+
+
+@app.get("/api/v1/matte/gif-info/{job_id}")
+async def matte_gif_info(job_id: str, request: Request, gif_url: str | None = None) -> JSONResponse:
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    from gif_trim import gif_info, gifsicle_available
+
+    if not gifsicle_available():
+        raise HTTPException(status_code=503, detail="gifsicle is not installed on this server")
+    gif = await asyncio.to_thread(_local_gif_for_trim, job_id, request, gif_url)
+    info = await asyncio.to_thread(gif_info, gif)
+    info.pop("disposals", None)
+    return JSONResponse({"job_id": job_id, **info})
+
+
+@app.post("/api/v1/matte/trim/{job_id}")
+async def matte_trim_gif(job_id: str, request: Request) -> JSONResponse:
+    """Body: {"mode": "auto"} or {"mode": "range", "start": int, "end": int} (inclusive frame indexes)."""
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    from gif_trim import TRIM_OUTPUT_NAMES, auto_fit, gifsicle_available, record_trim, trim_range
+
+    if not gifsicle_available():
+        raise HTTPException(status_code=503, detail="gifsicle is not installed on this server")
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    mode = str(payload.get("mode") or "auto")
+    if mode not in TRIM_OUTPUT_NAMES:
+        raise HTTPException(status_code=400, detail="mode must be 'auto' or 'range'")
+    gif = await asyncio.to_thread(
+        _local_gif_for_trim, job_id, request, str(payload.get("gif_url") or "").strip() or None
+    )
+    dest = gif.with_name(TRIM_OUTPUT_NAMES[mode])
+    try:
+        if mode == "auto":
+            result = await asyncio.to_thread(auto_fit, gif, dest)
+        else:
+            start, end = int(payload.get("start")), int(payload.get("end"))
+            result = await asyncio.to_thread(trim_range, gif, dest, start, end)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=500, detail=f"gifsicle failed: {exc.stderr!r}") from None
+    await asyncio.to_thread(record_trim, gif.parent, dest.name, mode, result["start"], result["end"])
+    try:
+        await asyncio.to_thread(_sync_trimmed_to_library, job_id, read_job_owner(gif.parent))
+    except Exception:
+        _log.warning("Trimmed GIF library sync failed job_id=%s", job_id, exc_info=True)
+    url = f"{_file_url(request, job_id, dest.name)}?v={int(dest.stat().st_mtime)}"
+    return JSONResponse({"job_id": job_id, "mode": mode, "gif_url": url, "filename": dest.name, **result})
+
+
+# ---------------------------------------------------------------------------
+# Public share links. /g/{job_id}.gif|.webm streams the exact stored library
+# bytes (no auth) so Slides/Docs/etc. can embed a stable first-party URL
+# instead of the Firebase token URL. job_id is uuid4 hex (unguessable).
+# ---------------------------------------------------------------------------
+_PUBLIC_MEDIA = {"gif": "image/gif", "webm": "video/webm"}
+
+
+@app.api_route("/g/{job_id}.{ext}", methods=["GET", "HEAD"], include_in_schema=False)
+async def public_library_file(job_id: str, ext: str, request: Request) -> Response:
+    if not _JOB_ID_RE.match(job_id) or ext not in _PUBLIC_MEDIA:
+        raise HTTPException(status_code=404, detail="Not found")
+    from firebase_storage_admin import get_public_export_blob
+
+    blob = await asyncio.to_thread(get_public_export_blob, job_id, ext)
+    if blob is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    headers = {
+        "Content-Disposition": f'inline; filename="formloop-{job_id[:8]}.{ext}"',
+        # Short TTL: the link switches to a trimmed copy when one is made later.
+        "Cache-Control": "public, max-age=300",
+        "Content-Length": str(blob.size),
+        "Accept-Ranges": "none",
+        "X-Content-Type-Options": "nosniff",
+        "Access-Control-Allow-Origin": "*",
+    }
+    if blob.etag:
+        headers["ETag"] = f'"{blob.etag}"'
+    if request.method == "HEAD":
+        return Response(status_code=200, media_type=_PUBLIC_MEDIA[ext], headers=headers)
+
+    def _chunks():
+        with blob.open("rb", chunk_size=1024 * 1024) as fh:
+            while True:
+                chunk = fh.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(_chunks(), media_type=_PUBLIC_MEDIA[ext], headers=headers)
+
+
+@app.post("/api/v1/library/share/{job_id}")
+async def library_share_link(job_id: str, request: Request) -> JSONResponse:
+    """Ensure the public /g/ mapping exists for one of the caller's exports and return its URLs."""
+    if not _JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    uid = _request_uid(request)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Sign in required.")
+    from firebase_storage_admin import find_export_id_for_job, write_public_link
+
+    export_id = await asyncio.to_thread(find_export_id_for_job, uid, job_id)
+    if not export_id or not await asyncio.to_thread(write_public_link, uid, job_id, export_id):
+        raise HTTPException(status_code=404, detail="Export not found in your library")
+    base = _public_base_url(request)
+    return JSONResponse({"gif_url": f"{base}/g/{job_id}.gif", "webm_url": f"{base}/g/{job_id}.webm"})
 
 
 # ---------------------------------------------------------------------------
@@ -2618,7 +2837,11 @@ async def matte_video_progress(job_id: str) -> JSONResponse:
         "done": status in {"completed", "failed"},
     }
     if status == "completed" and state.get("result"):
-        body["result"] = state["result"]
+        result = state["result"]
+        if isinstance(result, dict) and "gif_size_bytes" not in (result.get("gif_and_animation") or {}):
+            result = await asyncio.to_thread(_annotate_gif_size, job_id, result)
+            _set_job_state(job_id, result=result)  # measure once, not on every poll
+        body["result"] = result
     if status == "failed":
         body["error"] = str(state.get("error") or message)
     return JSONResponse(body)
@@ -2814,7 +3037,7 @@ async def matte_video(
                     detail=str(payload.get("error") or payload.get("status") or "RunPod failed"),
                 )
             await asyncio.to_thread(_persist_runpod_job_artifacts, job_id, payload)
-            return JSONResponse(_runpod_output_to_body(job_id, payload))
+            return JSONResponse(await asyncio.to_thread(_annotate_gif_size, job_id, _runpod_output_to_body(job_id, payload)))
         except HTTPException:
             raise
         except Exception as exc:
@@ -2905,7 +3128,7 @@ async def matte_video(
         premium=premium,
         model=model,
     )
-    return JSONResponse(body)
+    return JSONResponse(await asyncio.to_thread(_annotate_gif_size, job_id, body))
 
 
 @app.get("/api/v1/matte/input/{job_id}/{filename}")

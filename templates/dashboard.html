@@ -1062,6 +1062,7 @@
 {% endif %}
 {% endif %}
 </div>
+<script src="/static/gif_trim.js"></script>
 <script id="dash-flow-config" type="application/json">{{ {
   "firebaseConfig": firebase_config,
   "sessionUid": session_uid,
@@ -2234,6 +2235,12 @@
         );
         setStatus('Background removed. Review outputs then save export.', 'ok');
         pushToast('Processing completed', 'ok');
+        // Over the 50 MB Google Slides/Docs limit: offer a frame-trimmed copy
+        // (lossless; the full-quality original stays as-is).
+        const gifMeta = finalResult?.gif_and_animation || {};
+        if (gifMeta.oversize_for_slides && processedJobId && window.FormloopGifTrim) {
+          window.FormloopGifTrim.open({ jobId: processedJobId, gifUrl, sizeBytes: gifMeta.gif_size_bytes });
+        }
         if (saveWarn) {
           // Local testing: keep warning hidden to reduce UI noise.
           saveWarn.classList.add('hidden');
